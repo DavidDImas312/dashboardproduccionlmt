@@ -2,8 +2,10 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import altair as alt
+import plotly.express as px
 
-# Contraseña definida
+
 PASSWORD = ")ufIuabDoyH"
 
 def check_password():
@@ -27,7 +29,7 @@ def check_password():
 
 if check_password():
 
-    from utils import cargar_reporte_produccion, cargar_programacion, required_columns, required_columns_plan, exportar_varias_hojas_excel
+    from utils import cargar_reporte_produccion, cargar_programacion, required_columns, required_columns_plan, exportar_varias_hojas_excel, catalogo_downtime
 
     st.set_page_config(page_title="Análisis de Reportes de Producción", layout="wide")
 
@@ -161,10 +163,10 @@ if check_password():
             with col_y:
                 st.markdown("**Más Tiempo de Downtime (Top 5)**")
                 top5_downtime = (
-                    df_wc.groupby("W/C")["Downtime"]
+                    df_wc.groupby("W/C")["Production Downtime Hours"]
                     .sum()
                     .reset_index()
-                    .sort_values(by="Downtime", ascending=False)
+                    .sort_values(by="Production Downtime Hours", ascending=False)
                     .head(5)
                 )
                 st.dataframe(top5_downtime, use_container_width=True)
@@ -214,7 +216,7 @@ if check_password():
                 "figure.dpi": 120  # resolución adecuada para Streamlit
             })
 
-        # Gráfica 1: Eficiencia por W/C
+            # Gráfica 1: Eficiencia por W/C
             with col_a:
                 efficiency_wc = (
                     df_wc.groupby("W/C")["Efficiency"]
@@ -223,62 +225,47 @@ if check_password():
                     .sort_values(by="Efficiency", ascending=True)
                 )
 
-                fig, ax = plt.subplots(figsize=(8, 5))
-
-                sns.barplot(
-                    data=efficiency_wc,
+                # Gráfico interactivo con Plotly Express
+                fig = px.bar(
+                    efficiency_wc,
                     x="W/C",
                     y="Efficiency",
-                    ax=ax,
-                    palette="coolwarm"
+                    text="Efficiency",
+                    color="Efficiency",
+                    color_continuous_scale="RdBu",
+                    title="Promedio de Eficiencia",
+                    labels={
+                        "W/C": "Centro de Trabajo (W/C)",
+                        "Efficiency": "Eficiencia (%)"
+                    },
+                    height=500
                 )
 
-                ax.set_xlabel("Centro de Trabajo (W/C)", fontsize=13)
-                ax.set_ylabel("Eficiencia (%)", fontsize=13)
-                ax.set_title("Promedio de Eficiencia", fontsize=15, weight='bold')
-                ax.set_ylim(0, 100)
-                ax.grid(axis="y", linestyle="--", alpha=0.6)
-                ax.set_axisbelow(True)
+                # Personalización de texto y layout
+                fig.update_traces(
+                    texttemplate='%{text:.1f}%',
+                    textposition='inside',
+                    insidetextanchor='middle'
+                )
 
-                max_value = 100
+                fig.update_layout(
+                    yaxis_title="Eficiencia (%)",
+                    xaxis_title="Centro de Trabajo (W/C)",
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    yaxis=dict(showgrid=True, gridcolor='lightgrey', range=[0, 100]),
+                    xaxis=dict(showgrid=False),
+                    title_font=dict(size=18, color='white', family="Arial"),
+                    font=dict(size=12),
+                    margin=dict(t=50, l=50, r=30, b=80)
+                )
 
-                # Etiquetas sobre o fuera de las barras
-                for bar in ax.patches:
-                    height = bar.get_height()
+                # Rotar etiquetas del eje X
+                fig.update_xaxes(tickangle=35)
 
-                    if height > max_value * 0.15:
-                        # Si la barra es suficientemente alta: etiqueta dentro, color blanco
-                        ax.text(
-                            bar.get_x() + bar.get_width() / 2,
-                            height - (height * 0.05),
-                            f'{height:.1f}%',
-                            ha='center',
-                            va='center',
-                            fontsize=11,
-                            color='white',
-                            fontweight='bold'
-                        )
-                    else:
-                        # Si la barra es pequeña: etiqueta arriba, color negro
-                        ax.text(
-                            bar.get_x() + bar.get_width() / 2,
-                            height + 1,  # un poco arriba de la barra
-                            f'{height:.1f}%',
-                            ha='center',
-                            va='bottom',
-                            fontsize=11,
-                            color='black',
-                            fontweight='bold'
-                        )
+                # Mostrar gráfico en Streamlit
+                st.plotly_chart(fig, use_container_width=True)
 
-                plt.xticks(rotation=35, ha='right', fontsize=11)
-                plt.yticks(fontsize=11)
-
-                plt.tight_layout()  # <-- Ajusta todo para evitar que se empalmen
-
-                st.pyplot(fig)
-
-            # Gráfica 2: Partes Producidas por W/C
+          # Gráfica 2: Partes Producidas por W/C
             with col_b:
                 quantity_wc = (
                     df_wc.groupby("W/C")["Quantity"]
@@ -287,184 +274,154 @@ if check_password():
                     .sort_values(by="Quantity", ascending=True)
                 )
 
-                fig, ax = plt.subplots(figsize=(7, 5))
-
-                bars = sns.barplot(
-                    data=quantity_wc,
-                    y="W/C",
+                # Gráfico interactivo con Plotly Express
+                fig = px.bar(
+                    quantity_wc,
                     x="Quantity",
-                    ax=ax,
-                    palette="crest"
+                    y="W/C",
+                    text="Quantity",
+                    color="Quantity",
+                    color_continuous_scale="PuRd",
+                    title="Producción por W/C",
+                    labels={
+                        "Quantity": "Partes Producidas",
+                        "W/C": "Centro de Trabajo (W/C)"
+                    },
+                    height=500
                 )
 
-                max_value = quantity_wc["Quantity"].max()
+                # Personalización de texto y layout
+                fig.update_traces(
+                    texttemplate='%{text:,}',  # separador de miles
+                    textposition='inside',
+                    insidetextanchor='middle'
+                )
 
-                # Etiquetas dentro de las barras
-                max_value = quantity_wc["Quantity"].max()
+                fig.update_layout(
+                    xaxis_title="Partes Producidas",
+                    yaxis_title="Centro de Trabajo (W/C)",
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    xaxis=dict(showgrid=True, gridcolor='lightgrey'),
+                    yaxis=dict(showgrid=False),
+                    title_font=dict(size=18, color='white', family="Arial"),
+                    font=dict(size=12),
+                    margin=dict(t=50, l=50, r=30, b=50)
+                )
 
-                for p in bars.patches:
-                    width = p.get_width()
+                # Mostrar gráfico en Streamlit
+                st.plotly_chart(fig, use_container_width=True)
 
-                    if width > max_value * 0.15:
-                        # Si la barra es suficientemente grande: etiqueta dentro, color blanco
-                        ax.text(
-                            width - (width * 0.02),
-                            p.get_y() + p.get_height() / 2,
-                            f'{int(width):,}',
-                            ha='right', va='center',
-                            fontsize=10,
-                            color='white',
-                            fontweight='bold'
-                        )
-                    else:
-                        # Si la barra es pequeña: etiqueta afuera, color negro
-                        ax.text(
-                            width + (max_value * 0.01),
-                            p.get_y() + p.get_height() / 2,
-                            f'{int(width):,}',
-                            ha='left', va='center',
-                            fontsize=10,
-                            color='black',
-                            fontweight='bold'
-                        )
-
-                ax.set_xlabel("Partes Producidas")
-                ax.set_ylabel("Centro de Trabajo (W/C)")
-                ax.set_title("Producción por W/C")
-                ax.grid(axis='x', linestyle='--', alpha=0.6)
-                ax.set_axisbelow(True)
-
-                st.pyplot(fig)
 
 
             # Segunda fila de gráficas
             col_c, col_d = st.columns(2)
 
-            # Gráfica 3: Empleados por Turno
+            # Gráfica 3: Downtime por W/C
             with col_c:
-                empleados_turno = (
-                    df_wc.groupby("Shift")["Employee"]
-                    .nunique()
-                    .reset_index()
-                    .sort_values(by="Employee", ascending=True)
-                )
-
-                fig, ax = plt.subplots(figsize=(6, 4))
-
-                sns.barplot(
-                    data=empleados_turno,
-                    x="Shift",
-                    y="Employee",
-                    ax=ax,
-                    palette="flare"
-                )
-
-                max_value = empleados_turno["Employee"].max()
-
-                # Etiquetas sobre o fuera de las barras
-                for bar in ax.patches:
-                    height = bar.get_height()
-
-                    if height > max_value * 0.15:
-                        # Si la barra es suficientemente alta: etiqueta dentro, color blanco
-                        ax.text(
-                            bar.get_x() + bar.get_width() / 2,
-                            height - (height * 0.1),
-                            f'{int(height)}',
-                            ha='center',
-                            va='center',
-                            fontsize=11,
-                            color='white',
-                            fontweight='bold'
-                        )
-                    else:
-                        # Si la barra es pequeña: etiqueta arriba, color negro
-                        ax.text(
-                            bar.get_x() + bar.get_width() / 2,
-                            height + 0.3,
-                            f'{int(height)}',
-                            ha='center',
-                            va='bottom',
-                            fontsize=11,
-                            color='#333333',
-                            fontweight='bold'
-                        )
-
-                ax.set_xlabel("Turno", fontsize=13)
-                ax.set_ylabel("Empleados únicos", fontsize=13)
-                ax.set_title("Empleados por Turno", fontsize=15, weight='bold')
-                ax.grid(axis='y', linestyle='--', alpha=0.6)
-                ax.set_axisbelow(True)
-
-                plt.xticks(fontsize=11)
-                plt.yticks(fontsize=11)
-
-                plt.tight_layout()
-
-                st.pyplot(fig)
-
-            # Gráfica 4: Downtime por W/C
-            with col_d:
                 downtime_wc = (
-                    df_wc.groupby("W/C")["Downtime"]
+                    df_wc.groupby("W/C")["Production Downtime Hours"]
                     .sum()
                     .reset_index()
-                    .sort_values(by="Downtime", ascending=False)
+                    .sort_values(by="Production Downtime Hours", ascending=False)
                 )
 
-                fig, ax = plt.subplots(figsize=(6, 4))
+                if downtime_wc.empty:
+                    st.info("No hay datos de downtime en el rango de fechas y filtros seleccionados.")
+                else:
+                    # Gráfico con Plotly Express
+                    fig = px.bar(
+                        downtime_wc,
+                        y="W/C",
+                        x="Production Downtime Hours",
+                        orientation='h',
+                        text="Production Downtime Hours",
+                        color="Production Downtime Hours",
+                        color_continuous_scale="OrRd",
+                        labels={
+                            "W/C": "Centro de Trabajo (W/C)",
+                            "Production Downtime Hours": "Downtime (hrs)"
+                        },
+                        title="Downtime Total por W/C"
+                    )
 
-                sns.barplot(
-                    data=downtime_wc,
-                    y="W/C",
-                    x="Downtime",
-                    ax=ax,
-                    palette="rocket"
-                )
+                    # Personalización de texto y layout
+                    fig.update_traces(
+                        texttemplate='%{text:.2f}',
+                        textposition='inside',
+                        insidetextanchor='middle'
+                    )
 
-                max_value = downtime_wc["Downtime"].max()
+                    fig.update_layout(
+                        height=600,
+                        xaxis_title="Downtime (hrs)",
+                        yaxis_title="Centro de Trabajo (W/C)",
+                        coloraxis_showscale=False,
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        xaxis=dict(showgrid=True, gridcolor='lightgrey'),
+                        yaxis=dict(showgrid=False),
+                        title_font=dict(size=18, color='white', family="Arial"),
+                        font=dict(size=12)
+                    )
 
-                # Etiquetas sobre o fuera de las barras
-                for bar in ax.patches:
-                    width = bar.get_width()
+                    st.plotly_chart(fig, use_container_width=True)
 
-                    if width > max_value * 0.15:
-                        # Si la barra es suficientemente larga: etiqueta dentro
-                        ax.text(
-                            width - (width * 0.02),
-                            bar.get_y() + bar.get_height() / 2,
-                            f'{width:.2f}',
-                            ha='right',
-                            va='center',
-                            fontsize=11,
-                            color='white',
-                            fontweight='bold'
-                        )
+            #Gráfica 4: Razones de Downtime
+            with col_d:
+                if "Production Downtime Reasons" in df_wc.columns:
+                    # Agrupar por W/C y Reason ID, sumando Downtime
+                    downtime_por_wc = df_wc.groupby(["W/C", "Production Downtime Reasons"])["Production Downtime Hours"].sum().reset_index()
+
+                    # Unir con catálogo para obtener la descripción
+                    downtime_por_wc = downtime_por_wc.merge(
+                        catalogo_downtime, 
+                        left_on="Production Downtime Reasons", 
+                        right_on="Reason ID",
+                        how="left"
+                    )
+
+                    if downtime_por_wc.empty:
+                        st.info("No hay datos de downtime en el rango de fechas y filtros seleccionados.")
                     else:
-                        # Si la barra es corta: etiqueta afuera
-                        ax.text(
-                            width + 0.1,
-                            bar.get_y() + bar.get_height() / 2,
-                            f'{width:.2f}',
-                            ha='left',
-                            va='center',
-                            fontsize=11,
-                            color='#333333',
-                            fontweight='bold'
+                        # Gráfico interactivo con Plotly Express
+                        fig = px.bar(
+                            downtime_por_wc,
+                            x="Production Downtime Hours",
+                            y="W/C",
+                            color="Description",
+                            text="Production Downtime Hours",
+                            orientation="h",
+                            title="Downtime por Razón y Centro de Trabajo",
+                            labels={
+                                "Production Downtime Hours": "Downtime (hrs)",
+                                "W/C": "Centro de Trabajo (W/C)",
+                                "Description": "Razón de Downtime"
+                            },
+                            color_continuous_scale="Set2",
+                            height=600
                         )
 
-                ax.set_xlabel("Downtime (hrs)", fontsize=13)
-                ax.set_ylabel("Centro de Trabajo (W/C)", fontsize=13)
-                ax.set_title("Downtime Total por W/C", fontsize=15, weight='bold')
-                ax.grid(axis='x', linestyle='--', alpha=0.6)
-                ax.set_axisbelow(True)
+                        # Personalización de texto y layout
+                        fig.update_traces(
+                            texttemplate='%{text:.2f}',
+                            textposition='inside',
+                            insidetextanchor='middle'
+                        )
 
-                plt.xticks(fontsize=11)
-                plt.yticks(fontsize=11)
+                        fig.update_layout(
+                            barmode="group",  # si quieres que se apilen, o 'group' para separadas
+                            xaxis_title="Downtime (hrs)",
+                            yaxis_title="Centro de Trabajo (W/C)",
+                            plot_bgcolor='rgba(0,0,0,0)',
+                            xaxis=dict(showgrid=True, gridcolor='lightgrey'),
+                            yaxis=dict(showgrid=False),
+                            title_font=dict(size=18, color='white', family="Arial"),
+                            font=dict(size=12),
+                            legend_title_text="Razón de Downtime"
+                        )
 
-                plt.tight_layout()
-
-                st.pyplot(fig)
+                        st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("La columna 'Production Downtime Reasons' no está presente en el reporte de eficiencia cargado.")
 
             # Tercer fila de gráficas
             col_e, col_f = st.columns(2)
@@ -478,124 +435,91 @@ if check_password():
                     .sort_values(by="Efficiency", ascending=False)
                 )
 
-                fig, ax = plt.subplots(figsize=(6, 4))
-
-                sns.barplot(
-                    data=eficiencia_empleado,
-                    y="Employee",
+                # Gráfico interactivo con Plotly Express
+                fig = px.bar(
+                    eficiencia_empleado,
                     x="Efficiency",
-                    ax=ax,
-                    palette="rocket"
+                    y="Employee",
+                    text=eficiencia_empleado["Efficiency"].round(1).astype(str) + '%',
+                    color="Efficiency",
+                    color_continuous_scale="RdPu",
+                    title="Eficiencia Promedio por Empleado",
+                    labels={
+                        "Efficiency": "Eficiencia (%)",
+                        "Employee": "Empleado"
+                    },
+                    height=600
                 )
 
-                max_value = 100  # Porque la escala ya está limitada a 100%
+                # Personalización de layout y etiquetas
+                fig.update_traces(
+                    textposition='inside',
+                    insidetextanchor='middle'
+                )
 
-                # Etiquetas sobre o fuera de las barras
-                for bar in ax.patches:
-                    width = bar.get_width()
+                fig.update_layout(
+                    xaxis_title="Eficiencia (%)",
+                    yaxis_title="Empleado",
+                    xaxis=dict(range=[0, 100], showgrid=True, gridcolor='lightgrey'),
+                    yaxis=dict(showgrid=False),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    title_font=dict(size=18, color='white', family="Arial"),
+                    font=dict(size=12),
+                    margin=dict(t=50, l=50, r=30, b=50)
+                )
 
-                    if width > max_value * 0.15:
-                        # Si la barra es suficientemente larga: etiqueta dentro
-                        ax.text(
-                            width - (width * 0.02),
-                            bar.get_y() + bar.get_height() / 2,
-                            f'{width:.1f}%',
-                            ha='right',
-                            va='center',
-                            fontsize=11,
-                            color='white',
-                            fontweight='bold'
-                        )
-                    else:
-                        # Si la barra es corta: etiqueta afuera
-                        ax.text(
-                            width + 0.5,
-                            bar.get_y() + bar.get_height() / 2,
-                            f'{width:.1f}%',
-                            ha='left',
-                            va='center',
-                            fontsize=11,
-                            color='#333333',
-                            fontweight='bold'
-                        )
+                # Mostrar gráfico en Streamlit
+                st.plotly_chart(fig, use_container_width=True)
 
-                ax.set_xlabel("Eficiencia (%)", fontsize=13)
-                ax.set_ylabel("Empleado", fontsize=13)
-                ax.set_title("Eficiencia Promedio por Empleado", fontsize=15, weight='bold')
-                ax.set_xlim(0, 100)
-                ax.grid(axis='x', linestyle='--', alpha=0.6)
-                ax.set_axisbelow(True)
 
-                plt.xticks(fontsize=11)
-                plt.yticks(fontsize=11)
-
-                plt.tight_layout()
-
-                st.pyplot(fig)
-
-            # Gráfica 6: Cantidad de Work Orders por Turno
+            # Gráfica 6: Cantidad de Empleados por Turno
             with col_f:
-                wo_por_turno = (
-                    df_wc.groupby("Shift")["Job #"]
+                empleados_turno = (
+                    df_wc.groupby("Shift")["Employee"]
                     .nunique()
                     .reset_index()
-                    .sort_values(by="Job #", ascending=True)
+                    .sort_values(by="Employee", ascending=True)
                 )
 
-                fig, ax = plt.subplots(figsize=(5, 3.5))
-
-                sns.barplot(
-                    data=wo_por_turno,
+                # Gráfico interactivo con Plotly Express
+                fig = px.bar(
+                    empleados_turno,
                     x="Shift",
-                    y="Job #",
-                    ax=ax,
-                    palette="pastel"
+                    y="Employee",
+                    text=empleados_turno["Employee"].astype(str),
+                    color="Employee",
+                    color_continuous_scale="Agsunset",
+                    title="Empleados por Turno",
+                    labels={
+                        "Shift": "Turno",
+                        "Employee": "Empleados únicos"
+                    },
+                    height=500
                 )
 
-                max_value = wo_por_turno["Job #"].max()
+                # Personalización de layout y etiquetas
+                fig.update_traces(
+                    textposition='inside',
+                    insidetextanchor='middle'
+                )
 
-                # Etiquetas sobre o fuera de las barras
-                for bar in ax.patches:
-                    height = bar.get_height()
+                fig.update_layout(
+                    xaxis_title="Turno",
+                    yaxis_title="Empleados únicos",
+                    xaxis=dict(showgrid=False),
+                    yaxis=dict(showgrid=True, gridcolor='lightgrey'),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    title_font=dict(size=18, color='white', family="Arial"),
+                    font=dict(size=12),
+                    margin=dict(t=50, l=50, r=30, b=50)
+                )
 
-                    if height > max_value * 0.15:
-                        ax.text(
-                            bar.get_x() + bar.get_width() / 2,
-                            height - (height * 0.5),
-                            f'{height:.0f}',
-                            ha='center',
-                            va='bottom',
-                            fontsize=11,
-                            color='white',
-                            fontweight='bold'
-                        )
-                    else:
-                        ax.text(
-                            bar.get_x() + bar.get_width() / 2,
-                            height + 0.3,
-                            f'{height:.0f}',
-                            ha='center',
-                            va='bottom',
-                            fontsize=11,
-                            color='#333333',
-                            fontweight='bold'
-                        )
-
-                ax.set_xlabel("Turno", fontsize=13)
-                ax.set_ylabel("Cantidad de Work Orders", fontsize=13)
-                ax.set_title("Work Orders por Turno", fontsize=15, weight='bold')
-                ax.grid(axis='y', linestyle='--', alpha=0.6)
-                ax.set_axisbelow(True)
-
-                plt.xticks(fontsize=11)
-                plt.yticks(fontsize=11)
-
-                plt.tight_layout()
-
-                st.pyplot(fig)
+                # Mostrar gráfico en Streamlit
+                st.plotly_chart(fig, use_container_width=True)
 
             col_g, col_h = st.columns(2)
 
+            # Gráfica 7: horas por W/C
             with col_g:
                 horas_wc = (
                     df_wc.groupby("W/C")["Hours"]
@@ -604,57 +528,48 @@ if check_password():
                     .sort_values(by="Hours", ascending=False)
                 )
 
-                fig, ax = plt.subplots(figsize=(6, 4))
-
-                sns.barplot(
-                    data=horas_wc,
-                    y="W/C",
-                    x="Hours",
-                    ax=ax,
-                    palette="crest"
-                )
-
                 max_value = horas_wc["Hours"].max()
 
-                # Etiquetas sobre o fuera de las barras
-                for bar in ax.patches:
-                    width = bar.get_width()
+                # Definir posición de los textos
+                horas_wc["TextPosition"] = horas_wc["Hours"].apply(
+                    lambda x: 'inside' if x > max_value * 0.15 else 'outside'
+                )
 
-                    if width > max_value * 0.15:
-                        ax.text(
-                            width - (width * 0.01),
-                            bar.get_y() + bar.get_height() / 2,
-                            f'{width:.2f}',
-                            va='center',
-                            ha='right',
-                            fontsize=11,
-                            color='white',
-                            fontweight='bold'
-                        )
-                    else:
-                        ax.text(
-                            width + 0.1,
-                            bar.get_y() + bar.get_height() / 2,
-                            f'{width:.2f}',
-                            va='center',
-                            ha='left',
-                            fontsize=11,
-                            color='#333333',
-                            fontweight='bold'
-                        )
+                # Gráfico interactivo con Plotly Express
+                fig = px.bar(
+                    horas_wc,
+                    y="W/C",
+                    x="Hours",
+                    text=horas_wc["Hours"].round(2).astype(str),
+                    color="Hours",
+                    color_continuous_scale="Peach",
+                    title="Total de Horas por W/C",
+                    labels={
+                        "Hours": "Total de Horas",
+                        "W/C": "Centro de Trabajo (W/C)"
+                    },
+                    height=500
+                )
 
-                ax.set_xlabel("Total de Horas", fontsize=13)
-                ax.set_ylabel("Centro de Trabajo (W/C)", fontsize=13)
-                ax.set_title("Total de Horas por W/C", fontsize=15, weight='bold')
-                ax.grid(axis='x', linestyle='--', alpha=0.6)
-                ax.set_axisbelow(True)
+                # Personalización de layout y etiquetas
+                fig.update_traces(
+                    textposition=horas_wc["TextPosition"],
+                    insidetextanchor='middle'
+                )
 
-                plt.xticks(fontsize=11)
-                plt.yticks(fontsize=11)
+                fig.update_layout(
+                    xaxis_title="Total de Horas",
+                    yaxis_title="Centro de Trabajo (W/C)",
+                    xaxis=dict(showgrid=True, gridcolor='lightgrey'),
+                    yaxis=dict(showgrid=False),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    title_font=dict(size=18, color='white', family="Arial"),
+                    font=dict(size=12),
+                    margin=dict(t=50, l=50, r=30, b=50)
+                )
 
-                plt.tight_layout()
-
-                st.pyplot(fig)
+                # Mostrar gráfico en Streamlit
+                st.plotly_chart(fig, use_container_width=True)
 
             # Gráfica 8: Cantidad de Scrap por W/C
             with col_h:
@@ -665,57 +580,49 @@ if check_password():
                     .sort_values(by="Scrap", ascending=False)
                 )
 
-                fig, ax = plt.subplots(figsize=(6, 4))
-
-                sns.barplot(
-                    data=scrap_wc,
-                    y="W/C",
-                    x="Scrap",
-                    ax=ax,
-                    palette="rocket"
-                )
-
                 max_value = scrap_wc["Scrap"].max()
 
-                # Etiquetas sobre o fuera de las barras
-                for bar in ax.patches:
-                    width = bar.get_width()
+                # Definir posición de las etiquetas según tamaño
+                scrap_wc["TextPosition"] = scrap_wc["Scrap"].apply(
+                    lambda x: 'inside' if x > max_value * 0.15 else 'outside'
+                )
 
-                    if width > max_value * 0.15:
-                        ax.text(
-                            width - (width * 0.01),
-                            bar.get_y() + bar.get_height() / 2,
-                            f'{width:.0f}',
-                            va='center',
-                            ha='right',
-                            fontsize=11,
-                            color='white',
-                            fontweight='bold'
-                        )
-                    else:
-                        ax.text(
-                            width + 0.1,
-                            bar.get_y() + bar.get_height() / 2,
-                            f'{width:.0f}',
-                            va='center',
-                            ha='left',
-                            fontsize=11,
-                            color='#333333',
-                            fontweight='bold'
-                        )
+                # Crear gráfico con Plotly Express
+                fig = px.bar(
+                    scrap_wc,
+                    y="W/C",
+                    x="Scrap",
+                    text=scrap_wc["Scrap"].astype(int).astype(str),
+                    color="Scrap",
+                    color_continuous_scale="Inferno",
+                    title="Scrap por W/C",
+                    labels={
+                        "Scrap": "Scrap (Pzas)",
+                        "W/C": "Centro de Trabajo (W/C)"
+                    },
+                    height=500
+                )
 
-                ax.set_xlabel("Scrap (Pzas)", fontsize=13)
-                ax.set_ylabel("Centro de Trabajo (W/C)", fontsize=13)
-                ax.set_title("Scrap por W/C", fontsize=15, weight='bold')
-                ax.grid(axis='x', linestyle='--', alpha=0.6)
-                ax.set_axisbelow(True)
+                # Personalizar etiquetas y layout
+                fig.update_traces(
+                    textposition=scrap_wc["TextPosition"],
+                    insidetextanchor='middle'
+                )
 
-                plt.xticks(fontsize=11)
-                plt.yticks(fontsize=11)
+                fig.update_layout(
+                    xaxis_title="Scrap (Pzas)",
+                    yaxis_title="Centro de Trabajo (W/C)",
+                    xaxis=dict(showgrid=True, gridcolor='lightgrey'),
+                    yaxis=dict(showgrid=False),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    title_font=dict(size=18, color='white', family="Arial"),
+                    font=dict(size=12),
+                    margin=dict(t=50, l=50, r=30, b=50)
+                )
 
-                plt.tight_layout()
+                # Mostrar gráfico en Streamlit
+                st.plotly_chart(fig, use_container_width=True)
 
-                st.pyplot(fig)
 
             # Cuarta fila de gráficas
             col_i, col_j  = st.columns(2)
@@ -729,159 +636,189 @@ if check_password():
                     .sort_values(by="OEE", ascending=False)
                 )
 
-                fig, ax = plt.subplots(figsize=(6, 4))
-
-                sns.barplot(
-                    data=oee_wc,
-                    x="OEE",
-                    y="W/C",
-                    ax=ax,
-                    palette="mako"
-                )
-
                 max_value = oee_wc["OEE"].max()
 
-                # Etiquetas sobre o fuera de las barras
-                for bar in ax.patches:
-                    width = bar.get_width()
+                # Definir posición de las etiquetas según tamaño
+                oee_wc["TextPosition"] = oee_wc["OEE"].apply(
+                    lambda x: 'inside' if x > max_value * 0.15 else 'outside'
+                )
 
-                    if width > max_value * 0.15:
-                        ax.text(
-                            width - (width * 0.01),
-                            bar.get_y() + bar.get_height() / 2,
-                            f'{width:.2f}%',
-                            va='center',
-                            ha='right',
-                            fontsize=11,
-                            color='white',
-                            fontweight='bold'
-                        )
-                    else:
-                        ax.text(
-                            width + 0.3,
-                            bar.get_y() + bar.get_height() / 2,
-                            f'{width:.2f}%',
-                            va='center',
-                            ha='left',
-                            fontsize=11,
-                            color='#333333',
-                            fontweight='bold'
-                        )
+                # Crear gráfico con Plotly Express
+                fig = px.bar(
+                    oee_wc,
+                    y="W/C",
+                    x="OEE",
+                    text=oee_wc["OEE"].apply(lambda x: f'{x:.2f}%'),
+                    color="OEE",
+                    color_continuous_scale="Magma",
+                    title="OEE Promedio por W/C",
+                    labels={
+                        "OEE": "OEE Promedio (%)",
+                        "W/C": "Centro de Trabajo (W/C)"
+                    },
+                    height=500
+                )
 
-                ax.set_xlabel("OEE Promedio (%)", fontsize=13)
-                ax.set_ylabel("Centro de Trabajo (W/C)", fontsize=13)
-                ax.set_title("OEE Promedio por W/C", fontsize=15, weight='bold')
-                ax.set_xlim(0, 100)
-                ax.grid(axis='x', linestyle='--', alpha=0.6)
-                ax.set_axisbelow(True)
+                # Personalizar etiquetas y layout
+                fig.update_traces(
+                    textposition=oee_wc["TextPosition"],
+                    insidetextanchor='middle'
+                )
 
-                plt.xticks(fontsize=11)
-                plt.yticks(fontsize=11)
+                fig.update_layout(
+                    xaxis_title="OEE Promedio (%)",
+                    yaxis_title="Centro de Trabajo (W/C)",
+                    xaxis=dict(showgrid=True, gridcolor='lightgrey', range=[0, 100]),
+                    yaxis=dict(showgrid=False),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    title_font=dict(size=18, color='white', family="Arial"),
+                    font=dict(size=12),
+                    margin=dict(t=50, l=50, r=30, b=50)
+                )
 
-                plt.tight_layout()
-
-                st.pyplot(fig)
+                # Mostrar gráfico en Streamlit
+                st.plotly_chart(fig, use_container_width=True)
 
             # Gráfica 10: Expected vs Actual Run Rate /hr por W/C
             with col_j:
-                # Filtrar df_wc por turno si se seleccionó al menos uno
+                # Filtrar df_wc por turno si se seleccionó alguno
                 df_wc_filtrado = df_wc.copy()
 
                 if turnos_seleccionados:
                     df_wc_filtrado = df_wc_filtrado[df_wc_filtrado["Shift"].isin(turnos_seleccionados)]
 
+                # Asegurarnos que son numéricos
                 df_wc_filtrado["Expected Run Rate /hr"] = pd.to_numeric(df_wc_filtrado["Expected Run Rate /hr"], errors="coerce")
                 df_wc_filtrado["Actual Run Rate /hr"] = pd.to_numeric(df_wc_filtrado["Actual Run Rate /hr"], errors="coerce")
 
-                # Agrupar por W/C
+                # Agrupar por W/C y calcular promedios
                 runrate_wc = df_wc_filtrado.groupby("W/C")[["Expected Run Rate /hr", "Actual Run Rate /hr"]].mean().reset_index()
                 runrate_wc = runrate_wc.sort_values(by="Expected Run Rate /hr", ascending=False)
 
-                # Eliminar NaN para evitar shape mismatch
                 runrate_wc.dropna(subset=["Expected Run Rate /hr", "Actual Run Rate /hr"], inplace=True)
 
-                # Transformar a formato largo para seaborn
+                # Transformar a formato largo
                 runrate_wc_melted = runrate_wc.melt(
-                    id_vars="W/C", 
+                    id_vars="W/C",
                     value_vars=["Expected Run Rate /hr", "Actual Run Rate /hr"],
-                    var_name="Tipo", 
+                    var_name="Tipo",
                     value_name="Run Rate"
-                )
-
-                # Gráfica
-                fig, ax = plt.subplots(figsize=(7, 5))
-
-                custom_palette = {
-                    "Expected Run Rate /hr": "#1f77b4",
-                    "Actual Run Rate /hr": "#ff7f0e"
-                }
-
-                sns.barplot(
-                    data=runrate_wc_melted,
-                    y="W/C",
-                    x="Run Rate",
-                    hue="Tipo",
-                    palette=custom_palette,
-                    ax=ax
                 )
 
                 max_value = runrate_wc_melted["Run Rate"].max()
 
-                # Etiquetas de valor
-                for p in ax.patches:
-                    width = p.get_width()
-                    if not pd.isna(width):
-                        if width > max_value * 0.15:
-                            ax.text(
-                                width - (width * 0.01),
-                                p.get_y() + p.get_height() / 2,
-                                f'{width:.2f}',
-                                va='center',
-                                ha='right',
-                                fontsize=10,
-                                color='white',
-                                fontweight='bold'
-                            )
-                        else:
-                            ax.text(
-                                width + 0.3,
-                                p.get_y() + p.get_height() / 2,
-                                f'{width:.2f}',
-                                va='center',
-                                ha='left',
-                                fontsize=10,
-                                color='#333333',
-                                fontweight='bold'
-                            )
+                # Posiciones dinámicas de etiquetas
+                runrate_wc_melted["TextPosition"] = runrate_wc_melted["Run Rate"].apply(
+                    lambda x: 'inside' if x > max_value * 0.15 else 'outside'
+                )
 
-                # Detalles de estilo
-                ax.set_xlabel("Run Rate (unidades/hr)", fontsize=13)
-                ax.set_ylabel("Centro de Trabajo (W/C)", fontsize=13)
-                ax.set_title("Expected vs Actual Run Rate por W/C", fontsize=15, weight='bold')
-                ax.grid(axis='x', linestyle='--', alpha=0.6)
-                ax.set_axisbelow(True)
-                ax.legend(title="", loc="lower right")
+                # Gráfica con Plotly
+                fig = px.bar(
+                    runrate_wc_melted,
+                    y="W/C",
+                    x="Run Rate",
+                    color="Tipo",
+                    text=runrate_wc_melted["Run Rate"].apply(lambda x: f'{x:.2f}'),
+                    barmode="group",
+                    color_discrete_map={
+                        "Expected Run Rate /hr": "#1f77b4",
+                        "Actual Run Rate /hr": "#ff7f0e"
+                    },
+                    labels={
+                        "Run Rate": "Run Rate (unidades/hr)",
+                        "W/C": "Centro de Trabajo (W/C)"
+                    },
+                    title="Expected vs Actual Run Rate por W/C",
+                    height=550
+                )
 
-                plt.xticks(fontsize=11)
-                plt.yticks(fontsize=11)
+                # Personalizar etiquetas y estilo
+                fig.update_traces(
+                    textposition=runrate_wc_melted["TextPosition"],
+                    insidetextanchor='middle'
+                )
 
-                plt.tight_layout()
+                fig.update_layout(
+                    xaxis_title="Run Rate (unidades/hr)",
+                    yaxis_title="Centro de Trabajo (W/C)",
+                    xaxis=dict(showgrid=True, gridcolor='lightgrey'),
+                    yaxis=dict(showgrid=False),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    title_font=dict(size=18, color='white', family="Arial"),
+                    font=dict(size=12),
+                    margin=dict(t=50, l=50, r=30, b=50),
+                    legend_title_text=""
+                )
 
-                st.pyplot(fig)
+                st.plotly_chart(fig, use_container_width=True)
 
-            if not df_wc.empty:
-                diccionario_dfs = {
-                    "Downtime por W_C": downtime_wc,
-                    "Eficiencia por Empleado": eficiencia_empleado,
-                    "WorkOrders por Turno": wo_por_turno,
-                    "Horas por W_C": horas_wc,
-                    "Scrap por W_C": scrap_wc,
-                    "OEE por W_C": oee_wc,
-                    "RunRate por W_C": runrate_wc
-                }
+
+            #Siguiente fila
+            col_k, col_l = st.columns(2)
+
+            #Gráfica 12: WorkOrderd por turno
+            with col_k:
+                # Agrupar por turno y contar WO únicos
+                wo_por_turno = (
+                    df_wc.groupby("Shift")["Job #"]
+                    .nunique()
+                    .reset_index()
+                    .sort_values(by="Job #", ascending=True)
+                )
+
+                max_value = wo_por_turno["Job #"].max()
+
+                # Posiciones dinámicas de etiquetas
+                wo_por_turno["TextPosition"] = wo_por_turno["Job #"].apply(
+                    lambda x: 'inside' if x > max_value * 0.15 else 'outside'
+                )
+
+                # Gráfica con Plotly
+                fig = px.bar(
+                    wo_por_turno,
+                    x="Shift",
+                    y="Job #",
+                    text=wo_por_turno["Job #"].apply(lambda x: f'{x:.0f}'),
+                    color="Job #",
+                    color_continuous_scale="Magenta",
+                    labels={"Job #": "Cantidad de Work Orders", "Shift": "Turno"},
+                    title="Work Orders por Turno",
+                    height=400
+                )
+
+                # Personalizar etiquetas y estilo
+                fig.update_traces(
+                    textposition=wo_por_turno["TextPosition"],
+                    insidetextanchor='middle'
+                )
+
+                fig.update_layout(
+                    xaxis_title="Turno",
+                    yaxis_title="Cantidad de Work Orders",
+                    xaxis=dict(showgrid=False),
+                    yaxis=dict(showgrid=True, gridcolor='lightgrey'),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    title_font=dict(size=18, color='White', family="Arial"),
+                    font=dict(size=12),
+                    margin=dict(t=50, l=50, r=30, b=50),
+                    showlegend=False
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col_l: 
+                if not df_wc.empty:
+                    diccionario_dfs = {
+                        "Downtime por W_C": downtime_wc,
+                        "Eficiencia por Empleado": eficiencia_empleado,
+                        "WorkOrders por Turno": wo_por_turno,
+                        "Horas por W_C": horas_wc,
+                        "Scrap por W_C": scrap_wc,
+                        "OEE por W_C": oee_wc,
+                        "RunRate por W_C": runrate_wc
+                    }
 
                 exportar_varias_hojas_excel(diccionario_dfs)
-
 
             # Gráfica 11: Cumplimiento al Plan de Producción (solo este bloque usa su propio filtro)
             st.subheader("📈 Cumplimiento al Plan de Producción por W/C")
@@ -889,10 +826,8 @@ if check_password():
             if st.session_state.df_plan is not None:
                 df_plan = st.session_state.df_plan
 
-                # Obtener W/C Type únicos
                 wc_types_local = df_filtrado["W/C Type"].unique().tolist()
 
-                # Crear contenedor para filtros y botón de reset
                 with st.container():
                     col_reset, col_filters = st.columns([1, 5])
 
@@ -903,10 +838,8 @@ if check_password():
                             key="wc_type_local"
                         )
 
-                        # Filtrar datos según W/C Type seleccionado
                         df_plan_filtrado = df_plan[df_plan["W/C Type"] == selected_wc_type_local]
 
-                        # Subfiltro de W/C
                         wc_local = df_plan_filtrado["W/C"].unique().tolist()
 
                         selected_wc_local = st.multiselect(
@@ -915,57 +848,46 @@ if check_password():
                             key="wc_local"
                         )
 
-                #    with col_reset:
-                #        if st.button("🔄 Resetear Filtros"):
-                #            st.session_state["wc_type_local"] = wc_types_local[0]  # o ""
-                #            st.session_state["wc_local"] = []
-
-                # Aplicar subfiltro de W/C si hay selección
                 if selected_wc_local:
                     df_plan_filtrado = df_plan_filtrado[df_plan_filtrado["W/C"].isin(selected_wc_local)]
 
-                # Agrupar datos
                 cumplimiento_plan = df_plan_filtrado.groupby("W/C")[["To Make", "Produced"]].sum().reset_index()
 
-                # Calcular % de cumplimiento
                 cumplimiento_plan["Cumplimiento (%)"] = (
                     (cumplimiento_plan["Produced"] / cumplimiento_plan["To Make"]) * 100
                 ).round(2)
                 cumplimiento_plan["Cumplimiento (%)"].fillna(0, inplace=True)
 
-                # Ordenar de mayor a menor cumplimiento
                 cumplimiento_plan = cumplimiento_plan.sort_values(by="Cumplimiento (%)", ascending=True)
 
-                # Gráfica ordenada
-                fig, ax = plt.subplots(figsize=(7, 5))
-                sns.barplot(
-                    data=cumplimiento_plan,
+                # Gráfica con Plotly
+                fig = px.bar(
+                    cumplimiento_plan,
                     x="W/C",
                     y="Cumplimiento (%)",
-                    palette="light:#5A9",
-                    order=cumplimiento_plan["W/C"]  # <--- Aquí el orden definido
+                    text=cumplimiento_plan["Cumplimiento (%)"].apply(lambda x: f'{x:.1f}%'),
+                    color="Cumplimiento (%)",
+                    color_continuous_scale="teal",
+                    title=f'Cumplimiento al Plan ({selected_wc_type_local})',
+                    labels={"Cumplimiento (%)": "Cumplimiento (%)", "W/C": "Centro de Trabajo"},
+                    height=450
                 )
 
-                # Textos sobre barras
-                for bar, row in zip(ax.patches, cumplimiento_plan.itertuples(index=False)):
-                    height = bar.get_height()
-                    ax.text(
-                        bar.get_x() + bar.get_width() / 2,
-                        height + 1,
-                        f'{row._3:.1f}%',  # _3 si Cumplimiento es la 3a columna
-                        ha='center',
-                        fontsize=8
-                    )
+                fig.update_traces(
+                    textposition='outside'
+                )
 
+                fig.update_layout(
+                    yaxis=dict(range=[0, 120], showgrid=True, gridcolor='lightgrey'),
+                    xaxis=dict(showgrid=False),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    title_font=dict(size=18),
+                    font=dict(size=12),
+                    margin=dict(t=50, l=50, r=30, b=50),
+                    showlegend=False
+                )
 
-                ax.set_title(f'Cumplimiento al Plan ({selected_wc_type_local})')
-                ax.set_ylabel("Cumplimiento (%)")
-                ax.set_xlabel("Centro de Trabajo (W/C)")
-                ax.set_ylim(0, 120)
-                ax.grid(axis='y', linestyle='--', alpha=0.5)
-                plt.xticks(rotation=45)
-
-                st.pyplot(fig)
+                st.plotly_chart(fig, use_container_width=True)
 
                 # Mostrar tablas
                 st.subheader("📄 Datos Filtrados para Cumplimiento al Plan")
@@ -973,7 +895,6 @@ if check_password():
 
                 st.subheader("📊 Cumplimiento Agrupado por W/C")
                 st.dataframe(cumplimiento_plan)
-
             else:
                 st.info("Carga primero el archivo de Scheduled Jobs para mostrar esta gráfica.")
 

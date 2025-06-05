@@ -6,14 +6,13 @@ from datetime import datetime
 
 # Columnas requeridas para Production Efficiency
 required_columns = [
-     'Production Facility', 'W/C Type', 'W/C', 'Shift', 'Completed On', 'Timesheet #',
-    'Job #', 'Employee', 'Item/OP #', 'Actual Labour Units', 'Expected Labour Units',
-    'Machine Units', 'Expected Run Rate /hr', 'Actual Run Rate /hr', 'SPM', 'Quantity',
-    'Held', 'Scrap', 'Hours', 'Efficiency', 'Performance', 'Quality', 'Availability',
-    'OEE', 'Downtime', 'Available Hours'
+     'W/C Type', 'W/C', 'Shift', 'Completed On', 'Timesheet #',
+    'Job #', 'Employee', 'Item/OP #', 'Std Cost', 'Expected Run Rate /hr', 'Actual Run Rate /hr', 'Quantity',
+    'Held', 'Scrap', 'Scrap Cost', 'Hours', 'Efficiency', 'OEE', 'Production Downtime Hours', 'Non-production Downtime Hours',
+    'Production Downtime Reasons', 'Downtime Notes'
 ]
 
-numeric_cols = ['Hours', 'OEE', 'Efficiency', 'Quantity', 'Downtime', 'Scrap']
+numeric_cols = ['Hours', 'OEE', 'Efficiency', 'Quantity', 'Production Downtime Hours', 'Scrap', 'Non-production Downtime Hours']
 
 # Columnas requeridas para Scheduled Jobs
 required_columns_plan = [
@@ -105,3 +104,45 @@ def exportar_varias_hojas_excel(diccionario_dfs, nombre_base="Reporte_Produccion
         file_name=nombre_archivo,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+# ====================================
+# Razones de DownTime
+# ====================================
+
+catalogo_downtime = pd.DataFrame({
+    "Reason ID": [
+        "D001", "D002", "D003", "D004", "D005", "D006", "D007", "D008", "D009", "D010",
+        "D011", "D012", "D013", "D014", "D015", "D016", "D017", "D018", "D019", "D020",
+        "D021", "D022", "D023", "D024", "D025", "D026", "D027", "D028", "D029", "D030",
+        "D031", "D032", "D033", "D034", "D035", "D036", "D037", "D038", "D039", "D040",
+        "D041", "D042", "D043", "D044", "D045", "D046", "D047", "D048", "D049", "D050",
+        "D051", "D052", "D053", "D054", "D055", "D056", "D057", "D058", "D059", "D060",
+        "D061", "D062", "D063", "D064", "D065", "D066", "D067", "D068", "D069", "D070",
+        "D071", "D072", "D073"
+    ],
+    "Description": [
+        "cambio de rollo", "cambio de contenedor", "AJUSTES DE TROQUEL / ALINEACION / CAMBIO FECHA JULIANA",
+        "TROQUEL DAÑADO POR MAL GOLPE / AJUSTE", "FALLA EN SENSOR DE TROQUEL", "REVISION DE PIEZA / INSPECCIÓN",
+        "AJUSTE POR REBABA", "AJUSTE DE PLANICIDAD", "AJUSTE DE PERFIL", "AJUSTE POR FISURA",
+        "AJUSTE POR DEFORMACION", "AJUSTE POR LOCALIZACION", "AJUSTE POR MARCA EN PIEZA", "AJUSTE POR FALTA DE FORMA",
+        "AJUSTE POR TORNILLO CAPADO", "CILINDROS O RESORTES DAÑADOS", "NO LOCALIZA EN DISPOSITIVO DE CONTROL",
+        "TROQUEL DAÑADO POR MALA REPARACION", "FALLA EN PORTAROLLO / DESENRROLLADOR", "FALLA EN ENDEREZADOR",
+        "FALLA  EN EL ALIMENTADOR", "FALLA EN PRENSA", "FALLA EN SISTEMA DE AIRE", "FALLA  NEUMATICA",
+        "FALLA HIDRAULICA", "FALLA EN CORTINAS DE SEGURIDAD", "FALLA EN SISTEMA DE LUBRICACIÓN", "FALLA ELECTRICA",
+        "FALLA DE MONTACARGAS", "FALTA DE MATERIA PRIMA (No se ha traído o falta documentación para liberar)",
+        "FALTA DE CONTENEDORES/TROQUEL/TOLVAS (Montacargas)", "Falta de Orden de trabajo o etiquetas",
+        "Error en programa (se modifica programa o no hay acero de orden programada)",
+        "Falta de Empaque / Empaque mal rasurado", "PARO POR RETIRO DE TOLVAS DE SCRAP", "LIBERACIÓN DE PIEZA",
+        "PARO POR FALTA DE LIBERACION DE ACERO", "CAMBIO DE CAPS / ELECTRODOS", "LIMPIEZA DE CAPS",
+        "EXCEDENTE DE LIBERACIÓN", "EXCEDENTE TPM (5 min)", "EXCEDENTE RELLENO DE ANTI ESPATER",
+        "EXCEDENTE CAMBIO DE GAS", "EXCEDENTE CAMBIO DE MICROALAMBRE", "EXCEDENTE CAMBIO DE PUNTA DE CONTACTO",
+        "EXCEDENTE CAMBIO DE TOBERA", "AJUSTES DIMENSIONALES", "AJUSTE DE PUNTO", "AJUSTE DE CORDÓN",
+        "AJUSTE DE CÁMARAS", "AJUSTE DE SENSOR", "AJUSTE DE ERROR PROOFING", "FALLA DE PEDESTAL",
+        "FALLA EN SISTEMA DE AIRE", "FALLA NEUMÁTICA", "FALLA HIDRÁULICA", "FALLA EN SEGURIDADES DE CELDA",
+        "FALLA DE ROBOT", "FALLA DE PLANTA DE SOLDAR", "FALLA ELÉCTRICA", "FALLA DE COMUNICACIÓN",
+        "FALLA DE MONTACARGAS", "CORTE EN EL SUMINISTRO DE ENERGÍA EN PLANTA", "FALTA DE ETIQUETAS DE COMPONENTES EXTERNOS",
+        "FALTA DE CONTENEDORES", "FALTA DE ORDEN DE TRABAJO O ETIQUETAS", "ERROR EN PROGRAMA", "FALTA DE MATERIA PRIMA",
+        "EMPAQUE MAL RASURADO", "LIBERACIÓN DE PIEZA", "MATERIAL CON DEFECTO DE PROVEEDOR",
+        "PARO POR FALTA DE LIBERACIÓN DE COMPONENTES", "EXCEDENTE DE TIEMPO POR CUT&ETCH"
+    ]
+})
