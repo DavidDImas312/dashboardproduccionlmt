@@ -3,7 +3,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# Contraseña definida
 PASSWORD = ")ufIuabDoyH"
 
 def check_password():
