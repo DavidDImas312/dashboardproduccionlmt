@@ -122,9 +122,10 @@ if check_password():
             
             # KPIs resumen
             st.subheader("🔍 Resumen General")
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Horas trabajadas", f'{df_filtrado["Hours"].sum():,.2f}')
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Eficiencia Promedio", f'{df_filtrado["Efficiency"].mean():.2f}%')
             col2.metric("OEE Promedio", f'{df_filtrado["OEE"].mean():.2f}%')
+            col4.metric("Horas No-Producción", f'{df_filtrado["Non-production Downtime Hours"].sum():,.2f}')        
             col3.metric("Cantidad Producida", f'{df_filtrado["Quantity"].sum():,.0f}')
 
             
