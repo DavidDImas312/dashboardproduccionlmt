@@ -146,3 +146,68 @@ catalogo_downtime = pd.DataFrame({
         "PARO POR FALTA DE LIBERACIÓN DE COMPONENTES", "EXCEDENTE DE TIEMPO POR CUT&ETCH"
     ]
 })
+
+# ====================================
+# Extraer DownTime
+# ====================================
+
+def cargar_downtime(file):
+    try:
+        df_raw = pd.read_excel(file, header=None, names=["WorkCenter", "TotalHours"])
+        df_raw["TotalHours"] = pd.to_numeric(df_raw["TotalHours"], errors='coerce')
+        return df_raw
+    except Exception as e:
+        return None
+
+def extraer_downtime(df):
+    data = []
+    current_reason = None
+
+    for index, row in df.iterrows():
+        texto = str(row["WorkCenter"]).strip()
+
+        # Detectar encabezado de grupo tipo D005 - D005
+        if texto.startswith("D") and " - " in texto:
+            current_reason = texto.split(" - ")[0]
+
+        # Ignorar Totales y líneas vacías o genéricas
+        elif texto.startswith("Total") or texto == "" or texto.upper() == "PRESS - PRESS" or texto.upper() == "WELDING N2 - WELD N2" or texto.upper() == "PROD N4 - PROD N4" or texto.upper() == "Down Time by WC":
+            continue
+
+        # Si hay razón activa y es una línea válida
+        elif current_reason:
+            data.append({
+                "W/C": texto.split(" - ")[0],  # antes del primer guión por si hay
+                "Horas Downtime": row["TotalHours"],
+                "Razones": current_reason
+            })
+
+    return pd.DataFrame(data)
+
+# ====================================
+# Filtros DownTime
+# ====================================
+
+def filtrar_downtime(df_downtime, fechas=None, turnos=None, wc_types=None, wcs=None):
+    df_filtrado = df_downtime.copy()
+
+    if fechas is not None:
+        if "Completed On" in df_filtrado.columns:
+            df_filtrado = df_filtrado[
+                (df_filtrado["Completed On"] >= pd.to_datetime(fechas[0])) &
+                (df_filtrado["Completed On"] <= pd.to_datetime(fechas[1]))
+            ]
+
+    if turnos is not None:
+        if "Shift" in df_filtrado.columns:
+            df_filtrado = df_filtrado[df_filtrado["Shift"].isin(turnos)]
+
+    if wc_types is not None:
+        if "W/C Type" in df_filtrado.columns:
+            df_filtrado = df_filtrado[df_filtrado["W/C Type"].isin(wc_types)]
+
+    if wcs is not None:
+        if "W/C" in df_filtrado.columns:
+            df_filtrado = df_filtrado[df_filtrado["W/C"].isin(wcs)]
+
+    return df_filtrado

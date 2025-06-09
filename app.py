@@ -29,7 +29,7 @@ def check_password():
 
 if check_password():
 
-    from utils import cargar_reporte_produccion, cargar_programacion, required_columns, required_columns_plan, exportar_varias_hojas_excel, catalogo_downtime
+    from utils import cargar_reporte_produccion, cargar_programacion, required_columns, required_columns_plan, exportar_varias_hojas_excel, catalogo_downtime, cargar_downtime, extraer_downtime, filtrar_downtime
 
     st.set_page_config(page_title="Análisis de Reportes de Producción", layout="wide")
 
@@ -80,6 +80,25 @@ if check_password():
             st.success("✅ Archivo de programación cargado.")
             if st.checkbox("Mostrar datos de programación"):
                 st.dataframe(df_plan)
+        
+        st.header("📥 Importar Reporte Downtime por W/C")
+        uploaded_downtime = st.file_uploader("Selecciona el archivo Excel de Downtime", type=["xlsx"], key="downtime")
+
+        if uploaded_downtime is not None:
+            df_downtime = cargar_downtime(uploaded_downtime)
+            if df_downtime is None:
+                st.error("❌ No se pudo leer el archivo de Downtime.")
+                st.stop()
+
+            st.session_state.df_downtime = df_downtime
+            st.success("✅ Archivo de Downtime cargado.")
+
+            # Procesamos con la función
+            df_downtime_procesado = extraer_downtime(df_downtime)
+            st.session_state.df_downtime_procesado = df_downtime_procesado
+
+            if st.checkbox("Mostrar Downtime procesado"):
+                st.dataframe(df_downtime_procesado)
 
     # Pantalla de Dashboard
     elif option == "Dashboard":
@@ -312,96 +331,48 @@ if check_password():
                 # Mostrar gráfico en Streamlit
                 st.plotly_chart(fig, use_container_width=True)
 
-
-
             # Segunda fila de gráficas
             col_c, col_d = st.columns(2)
 
             # Gráfica 3: Downtime por W/C
-            with col_c:
-                downtime_wc = (
-                    df_wc.groupby("W/C")["Production Downtime Hours"]
-                    .sum()
-                    .reset_index()
-                    .sort_values(by="Production Downtime Hours", ascending=False)
+            if "df_downtime_procesado" in st.session_state:
+                df_downtime = st.session_state.df_downtime_procesado
+                
+                 # Filtramos downtime con los mismos criterios
+                df_downtime_filtrado = filtrar_downtime(
+                    df_downtime,
+                    fechas=fechas,
+                    turnos=turnos_seleccionados,
+                    wc_types=wc_types_seleccionados,
+                    wcs=selected_wc
                 )
 
-                if downtime_wc.empty:
-                    st.info("No hay datos de downtime en el rango de fechas y filtros seleccionados.")
-                else:
-                    # Gráfico con Plotly Express
-                    fig = px.bar(
-                        downtime_wc,
-                        y="W/C",
-                        x="Production Downtime Hours",
-                        orientation='h',
-                        text="Production Downtime Hours",
-                        color="Production Downtime Hours",
-                        color_continuous_scale="OrRd",
-                        labels={
-                            "W/C": "Centro de Trabajo (W/C)",
-                            "Production Downtime Hours": "Downtime (hrs)"
-                        },
-                        title="Downtime Total por W/C"
+                with col_c:
+                    downtime_wc = (
+                        df_downtime_filtrado.groupby("W/C")["Horas Downtime"]
+                        .sum()
+                        .reset_index()
+                        .sort_values(by="Horas Downtime", ascending=False)
                     )
 
-                    # Personalización de texto y layout
-                    fig.update_traces(
-                        texttemplate='%{text:.2f}',
-                        textposition='inside',
-                        insidetextanchor='middle'
-                    )
-
-                    fig.update_layout(
-                        height=600,
-                        xaxis_title="Downtime (hrs)",
-                        yaxis_title="Centro de Trabajo (W/C)",
-                        coloraxis_showscale=False,
-                        plot_bgcolor='rgba(0,0,0,0)',
-                        xaxis=dict(showgrid=True, gridcolor='lightgrey'),
-                        yaxis=dict(showgrid=False),
-                        title_font=dict(size=18, color='white', family="Arial"),
-                        font=dict(size=12)
-                    )
-
-                    st.plotly_chart(fig, use_container_width=True)
-
-            #Gráfica 4: Razones de Downtime
-            with col_d:
-                if "Production Downtime Reasons" in df_wc.columns:
-                    # Agrupar por W/C y Reason ID, sumando Downtime
-                    downtime_por_wc = df_wc.groupby(["W/C", "Production Downtime Reasons"])["Production Downtime Hours"].sum().reset_index()
-
-                    # Unir con catálogo para obtener la descripción
-                    downtime_por_wc = downtime_por_wc.merge(
-                        catalogo_downtime, 
-                        left_on="Production Downtime Reasons", 
-                        right_on="Reason ID",
-                        how="left"
-                    )
-
-                    if downtime_por_wc.empty:
+                    if downtime_wc.empty:
                         st.info("No hay datos de downtime en el rango de fechas y filtros seleccionados.")
                     else:
-                        # Gráfico interactivo con Plotly Express
                         fig = px.bar(
-                            downtime_por_wc,
-                            x="Production Downtime Hours",
+                            downtime_wc,
                             y="W/C",
-                            color="Description",
-                            text="Production Downtime Hours",
-                            orientation="h",
-                            title="Downtime por Razón y Centro de Trabajo",
+                            x="Horas Downtime",
+                            orientation='h',
+                            text="Horas Downtime",
+                            color="Horas Downtime",
+                            color_continuous_scale="OrRd",
                             labels={
-                                "Production Downtime Hours": "Downtime (hrs)",
                                 "W/C": "Centro de Trabajo (W/C)",
-                                "Description": "Razón de Downtime"
+                                "Horas Downtime": "Downtime (hrs)"
                             },
-                            color_continuous_scale="Set2",
-                            height=600
+                            title="Downtime Total por W/C"
                         )
 
-                        # Personalización de texto y layout
                         fig.update_traces(
                             texttemplate='%{text:.2f}',
                             textposition='inside',
@@ -409,20 +380,89 @@ if check_password():
                         )
 
                         fig.update_layout(
-                            barmode="group",  # si quieres que se apilen, o 'group' para separadas
+                            height=600,
                             xaxis_title="Downtime (hrs)",
                             yaxis_title="Centro de Trabajo (W/C)",
+                            coloraxis_showscale=False,
                             plot_bgcolor='rgba(0,0,0,0)',
                             xaxis=dict(showgrid=True, gridcolor='lightgrey'),
                             yaxis=dict(showgrid=False),
                             title_font=dict(size=18, color='white', family="Arial"),
-                            font=dict(size=12),
-                            legend_title_text="Razón de Downtime"
+                            font=dict(size=12)
                         )
 
                         st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("La columna 'Production Downtime Reasons' no está presente en el reporte de eficiencia cargado.")
+            else:
+                st.warning("Debes cargar y procesar el archivo de downtime por W/C primero.")
+
+            #Gráfica 4: Razones de Downtime
+            if "df_downtime_procesado" in st.session_state:
+                df_downtime = st.session_state.df_downtime_procesado
+
+                df_downtime_filtrado = filtrar_downtime(
+                    df_downtime,
+                    fechas=fechas,
+                    turnos=turnos_seleccionados,
+                    wc_types=wc_types_seleccionados,
+                    wcs=selected_wc
+                )
+                with col_d:
+                    if "Razones" in df_downtime_filtrado.columns:
+                        downtime_por_wc = df_downtime_filtrado.groupby(
+                            ["W/C", "Razones"]
+                        )["Horas Downtime"].sum().reset_index()
+
+                        downtime_por_wc = downtime_por_wc.merge(
+                            catalogo_downtime, 
+                            left_on="Razones", 
+                            right_on="Reason ID",
+                            how="left"
+                        )
+
+                        if downtime_por_wc.empty:
+                            st.info("No hay datos de downtime en el rango de fechas y filtros seleccionados.")
+                        else:
+                            fig = px.bar(
+                                downtime_por_wc,
+                                x="Horas Downtime",
+                                y="W/C",
+                                color="Description",
+                                text="Horas Downtime",
+                                orientation="h",
+                                title="Downtime por Razón y Centro de Trabajo",
+                                labels={
+                                    "Horas Downtime": "Downtime (hrs)",
+                                    "W/C": "Centro de Trabajo (W/C)",
+                                    "Description": "Razón de Downtime"
+                                },
+                                color_discrete_sequence=px.colors.qualitative.Set2,
+                                height=600
+                            )
+
+                            fig.update_traces(
+                                texttemplate='%{text:.2f}',
+                                textposition='inside',
+                                insidetextanchor='middle'
+                            )
+
+                            fig.update_layout(
+                                barmode="group",
+                                xaxis_title="Downtime (hrs)",
+                                yaxis_title="Centro de Trabajo (W/C)",
+                                plot_bgcolor='rgba(0,0,0,0)',
+                                xaxis=dict(showgrid=True, gridcolor='lightgrey'),
+                                yaxis=dict(showgrid=False),
+                                title_font=dict(size=18, color='white', family="Arial"),
+                                font=dict(size=12),
+                                legend_title_text="Razón de Downtime"
+                            )
+
+                            st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning("La columna 'Razones' no está presente en el downtime procesado.")
+            else:
+                st.warning("Debes cargar y procesar el archivo de downtime por W/C primero.")
+
 
             # Tercer fila de gráficas
             col_e, col_f = st.columns(2)
@@ -807,19 +847,19 @@ if check_password():
 
                 st.plotly_chart(fig, use_container_width=True)
 
-            with col_l: 
-                if not df_wc.empty:
-                    diccionario_dfs = {
-                        "Downtime por W_C": downtime_wc,
-                        "Eficiencia por Empleado": eficiencia_empleado,
-                        "WorkOrders por Turno": wo_por_turno,
-                        "Horas por W_C": horas_wc,
-                        "Scrap por W_C": scrap_wc,
-                        "OEE por W_C": oee_wc,
-                        "RunRate por W_C": runrate_wc
-                    }
+            # with col_l: 
+            #    if not df_wc.empty:
+            #        diccionario_dfs = {
+            #            "Downtime por W_C": downtime_wc,
+            #            "Eficiencia por Empleado": eficiencia_empleado,
+            #            "WorkOrders por Turno": wo_por_turno,
+            #            "Horas por W_C": horas_wc,
+            #            "Scrap por W_C": scrap_wc,
+            #            "OEE por W_C": oee_wc,
+            #            "RunRate por W_C": runrate_wc
+            #        }
 
-                exportar_varias_hojas_excel(diccionario_dfs)
+            #    exportar_varias_hojas_excel(diccionario_dfs)
 
             # Gráfica 11: Cumplimiento al Plan de Producción (solo este bloque usa su propio filtro)
             st.subheader("📈 Cumplimiento al Plan de Producción por W/C")
