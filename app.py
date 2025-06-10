@@ -138,13 +138,15 @@ if check_password():
             )
 
             df_filtrado = df_filtrado[df_filtrado["W/C Type"].isin(wc_types_seleccionados)]
-            
+            # Filtrar jobs únicos antes de agrupar
+            df_filtrado_unique = df_filtrado.drop_duplicates(subset=["Timesheet #"])
+
             # KPIs resumen
             st.subheader("🔍 Resumen General")
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Eficiencia Promedio", f'{df_filtrado["Efficiency"].mean():.2f}%')
             col2.metric("OEE Promedio", f'{df_filtrado["OEE"].mean():.2f}%')
-            col4.metric("Horas No-Producción", f'{df_filtrado["Non-production Downtime Hours"].sum():,.2f}')        
+            col4.metric("Horas No-Producción", f'{df_filtrado_unique["Non-production Downtime Hours"].sum():,.2f}')        
             col3.metric("Cantidad Producida", f'{df_filtrado["Quantity"].sum():,.0f}')
 
             
@@ -365,7 +367,7 @@ if check_password():
                             orientation='h',
                             text="Horas Downtime",
                             color="Horas Downtime",
-                            color_continuous_scale="OrRd",
+                            color_continuous_scale="gnbu",
                             labels={
                                 "W/C": "Centro de Trabajo (W/C)",
                                 "Horas Downtime": "Downtime (hrs)"
@@ -383,7 +385,7 @@ if check_password():
                             height=600,
                             xaxis_title="Downtime (hrs)",
                             yaxis_title="Centro de Trabajo (W/C)",
-                            coloraxis_showscale=False,
+                           # coloraxis_showscale=False,
                             plot_bgcolor='rgba(0,0,0,0)',
                             xaxis=dict(showgrid=True, gridcolor='lightgrey'),
                             yaxis=dict(showgrid=False),
@@ -513,163 +515,8 @@ if check_password():
                 st.plotly_chart(fig, use_container_width=True)
 
 
-            # Gráfica 6: Cantidad de Empleados por Turno
+            # Gráfica 6: OEE por W/C
             with col_f:
-                empleados_turno = (
-                    df_wc.groupby("Shift")["Employee"]
-                    .nunique()
-                    .reset_index()
-                    .sort_values(by="Employee", ascending=True)
-                )
-
-                # Gráfico interactivo con Plotly Express
-                fig = px.bar(
-                    empleados_turno,
-                    x="Shift",
-                    y="Employee",
-                    text=empleados_turno["Employee"].astype(str),
-                    color="Employee",
-                    color_continuous_scale="Agsunset",
-                    title="Empleados por Turno",
-                    labels={
-                        "Shift": "Turno",
-                        "Employee": "Empleados únicos"
-                    },
-                    height=500
-                )
-
-                # Personalización de layout y etiquetas
-                fig.update_traces(
-                    textposition='inside',
-                    insidetextanchor='middle'
-                )
-
-                fig.update_layout(
-                    xaxis_title="Turno",
-                    yaxis_title="Empleados únicos",
-                    xaxis=dict(showgrid=False),
-                    yaxis=dict(showgrid=True, gridcolor='lightgrey'),
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    title_font=dict(size=18, color='white', family="Arial"),
-                    font=dict(size=12),
-                    margin=dict(t=50, l=50, r=30, b=50)
-                )
-
-                # Mostrar gráfico en Streamlit
-                st.plotly_chart(fig, use_container_width=True)
-
-            col_g, col_h = st.columns(2)
-
-            # Gráfica 7: horas por W/C
-            with col_g:
-                horas_wc = (
-                    df_wc.groupby("W/C")["Hours"]
-                    .sum()
-                    .reset_index()
-                    .sort_values(by="Hours", ascending=False)
-                )
-
-                max_value = horas_wc["Hours"].max()
-
-                # Definir posición de los textos
-                horas_wc["TextPosition"] = horas_wc["Hours"].apply(
-                    lambda x: 'inside' if x > max_value * 0.15 else 'outside'
-                )
-
-                # Gráfico interactivo con Plotly Express
-                fig = px.bar(
-                    horas_wc,
-                    y="W/C",
-                    x="Hours",
-                    text=horas_wc["Hours"].round(2).astype(str),
-                    color="Hours",
-                    color_continuous_scale="Peach",
-                    title="Total de Horas por W/C",
-                    labels={
-                        "Hours": "Total de Horas",
-                        "W/C": "Centro de Trabajo (W/C)"
-                    },
-                    height=500
-                )
-
-                # Personalización de layout y etiquetas
-                fig.update_traces(
-                    textposition=horas_wc["TextPosition"],
-                    insidetextanchor='middle'
-                )
-
-                fig.update_layout(
-                    xaxis_title="Total de Horas",
-                    yaxis_title="Centro de Trabajo (W/C)",
-                    xaxis=dict(showgrid=True, gridcolor='lightgrey'),
-                    yaxis=dict(showgrid=False),
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    title_font=dict(size=18, color='white', family="Arial"),
-                    font=dict(size=12),
-                    margin=dict(t=50, l=50, r=30, b=50)
-                )
-
-                # Mostrar gráfico en Streamlit
-                st.plotly_chart(fig, use_container_width=True)
-
-            # Gráfica 8: Cantidad de Scrap por W/C
-            with col_h:
-                scrap_wc = (
-                    df_wc.groupby("W/C")["Scrap"]
-                    .sum()
-                    .reset_index()
-                    .sort_values(by="Scrap", ascending=False)
-                )
-
-                max_value = scrap_wc["Scrap"].max()
-
-                # Definir posición de las etiquetas según tamaño
-                scrap_wc["TextPosition"] = scrap_wc["Scrap"].apply(
-                    lambda x: 'inside' if x > max_value * 0.15 else 'outside'
-                )
-
-                # Crear gráfico con Plotly Express
-                fig = px.bar(
-                    scrap_wc,
-                    y="W/C",
-                    x="Scrap",
-                    text=scrap_wc["Scrap"].astype(int).astype(str),
-                    color="Scrap",
-                    color_continuous_scale="Inferno",
-                    title="Scrap por W/C",
-                    labels={
-                        "Scrap": "Scrap (Pzas)",
-                        "W/C": "Centro de Trabajo (W/C)"
-                    },
-                    height=500
-                )
-
-                # Personalizar etiquetas y layout
-                fig.update_traces(
-                    textposition=scrap_wc["TextPosition"],
-                    insidetextanchor='middle'
-                )
-
-                fig.update_layout(
-                    xaxis_title="Scrap (Pzas)",
-                    yaxis_title="Centro de Trabajo (W/C)",
-                    xaxis=dict(showgrid=True, gridcolor='lightgrey'),
-                    yaxis=dict(showgrid=False),
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    title_font=dict(size=18, color='white', family="Arial"),
-                    font=dict(size=12),
-                    margin=dict(t=50, l=50, r=30, b=50)
-                )
-
-                # Mostrar gráfico en Streamlit
-                st.plotly_chart(fig, use_container_width=True)
-
-
-            # Cuarta fila de gráficas
-            col_i, col_j  = st.columns(2)
-
-            # Gráfica 9: OEE promedio por W/C
-            with col_i:
                 oee_wc = (
                     df_wc.groupby("W/C")["OEE"]
                     .mean()
@@ -719,6 +566,175 @@ if check_password():
 
                 # Mostrar gráfico en Streamlit
                 st.plotly_chart(fig, use_container_width=True)
+
+            col_g, col_h = st.columns(2)
+
+            # Gráfica 7: horas por W/C
+            with col_g:
+                # Filtrar TimeSheet únicos antes de agrupar
+                df_unique_timesheet = df_wc.drop_duplicates(subset=["Timesheet #"])
+                
+                horas_wc = (
+                    df_unique_timesheet.groupby("W/C")["Hours"]
+                    .sum()
+                    .reset_index()
+                    .sort_values(by="Hours", ascending=False)
+                )
+
+                max_value = horas_wc["Hours"].max()
+
+                # Definir posición de los textos
+                horas_wc["TextPosition"] = horas_wc["Hours"].apply(
+                    lambda x: 'inside' if x > max_value * 0.15 else 'outside'
+                )
+
+                # Gráfico interactivo con Plotly Express
+                fig = px.bar(
+                    horas_wc,
+                    y="W/C",
+                    x="Hours",
+                    text=horas_wc["Hours"].round(2).astype(str),
+                    color="Hours",
+                    color_continuous_scale="Peach",
+                    title="Total de Horas por W/C",
+                    labels={
+                        "Hours": "Total de Horas",
+                        "W/C": "Centro de Trabajo (W/C)"
+                    },
+                    height=500
+                )
+
+                # Personalización de layout y etiquetas
+                fig.update_traces(
+                    textposition=horas_wc["TextPosition"],
+                    insidetextanchor='middle'
+                )
+
+                fig.update_layout(
+                    xaxis_title="Total de Horas",
+                    yaxis_title="Centro de Trabajo (W/C)",
+                    xaxis=dict(showgrid=True, gridcolor='lightgrey'),
+                    yaxis=dict(showgrid=False),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    title_font=dict(size=18, color='white', family="Arial"),
+                    font=dict(size=12),
+                    margin=dict(t=50, l=50, r=30, b=50)
+                )
+
+                # Mostrar gráfico en Streamlit
+                st.plotly_chart(fig, use_container_width=True)
+
+            # Gráfica 8: Non-production by W/C
+            with col_h:
+            # Eliminar jobs duplicados para esta gráfica
+                df_unique = df_wc.drop_duplicates(subset=["Job #"])
+
+                # Agrupar y sumar las Non-production Downtime Hours por W/C
+                non_prod_wc = (
+                    df_unique.groupby("W/C")["Non-production Downtime Hours"]
+                    .sum()
+                    .reset_index()
+                    .sort_values(by="Non-production Downtime Hours", ascending=False)
+                )
+
+                max_value = non_prod_wc["Non-production Downtime Hours"].max()
+
+                # Definir posición de los textos
+                non_prod_wc["TextPosition"] = non_prod_wc["Non-production Downtime Hours"].apply(
+                    lambda x: 'inside' if x > max_value * 0.15 else 'outside'
+                )
+
+                # Gráfico interactivo con Plotly Express
+                fig = px.bar(
+                    non_prod_wc,
+                    y="W/C",
+                    x="Non-production Downtime Hours",
+                    text=non_prod_wc["Non-production Downtime Hours"].round(2).astype(str),
+                    color="Non-production Downtime Hours",
+                    color_continuous_scale="amp",
+                    title="Total de Horas No-Producción por W/C",
+                    labels={
+                        "Non-production Downtime Hours": "Horas No-Producción",
+                        "W/C": "Centro de Trabajo (W/C)"
+                    },
+                    height=500
+                )
+
+                # Personalización de layout y etiquetas
+                fig.update_traces(
+                    textposition=non_prod_wc["TextPosition"],
+                    insidetextanchor='middle'
+                )
+
+                fig.update_layout(
+                    xaxis_title="Total de Horas No-Producción",
+                    yaxis_title="Centro de Trabajo (W/C)",
+                    xaxis=dict(showgrid=True, gridcolor='lightgrey'),
+                    yaxis=dict(showgrid=False),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    title_font=dict(size=18, color='white', family="Arial"),
+                    font=dict(size=12),
+                    margin=dict(t=50, l=50, r=30, b=50)
+                )
+
+                # Mostrar gráfico en Streamlit
+                st.plotly_chart(fig, use_container_width=True)               
+
+
+            # Cuarta fila de gráficas
+            col_i, col_j  = st.columns(2)
+
+            # Gráfica 9: Scrap por W/C
+            with col_i:
+                scrap_wc = (
+                    df_wc.groupby("W/C")["Scrap"]
+                    .sum()
+                    .reset_index()
+                    .sort_values(by="Scrap", ascending=False)
+                )
+
+                max_value = scrap_wc["Scrap"].max()
+
+                # Definir posición de las etiquetas según tamaño
+                scrap_wc["TextPosition"] = scrap_wc["Scrap"].apply(
+                    lambda x: 'inside' if x > max_value * 0.15 else 'outside'
+                )
+
+                # Crear gráfico con Plotly Express
+                fig = px.bar(
+                    scrap_wc,
+                    y="W/C",
+                    x="Scrap",
+                    text=scrap_wc["Scrap"].astype(int).astype(str),
+                    color="Scrap",
+                    color_continuous_scale="Inferno",
+                    title="Scrap por W/C",
+                    labels={
+                        "Scrap": "Scrap (Pzas)",
+                        "W/C": "Centro de Trabajo (W/C)"
+                    },
+                    height=500
+                )
+
+                # Personalizar etiquetas y layout
+                fig.update_traces(
+                    textposition=scrap_wc["TextPosition"],
+                    insidetextanchor='middle'
+                )
+
+                fig.update_layout(
+                    xaxis_title="Scrap (Pzas)",
+                    yaxis_title="Centro de Trabajo (W/C)",
+                    xaxis=dict(showgrid=True, gridcolor='lightgrey'),
+                    yaxis=dict(showgrid=False),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    title_font=dict(size=18, color='white', family="Arial"),
+                    font=dict(size=12),
+                    margin=dict(t=50, l=50, r=30, b=50)
+                )
+
+                # Mostrar gráfico en Streamlit
+                st.plotly_chart(fig, use_container_width=True)               
 
             # Gráfica 10: Expected vs Actual Run Rate /hr por W/C
             with col_j:
@@ -797,8 +813,53 @@ if check_password():
             #Siguiente fila
             col_k, col_l = st.columns(2)
 
-            #Gráfica 12: WorkOrderd por turno
+            #Gráfica 12: Emeplados por turno
             with col_k:
+                empleados_turno = (
+                    df_wc.groupby("Shift")["Employee"]
+                    .nunique()
+                    .reset_index()
+                    .sort_values(by="Employee", ascending=True)
+                )
+
+                # Gráfico interactivo con Plotly Express
+                fig = px.bar(
+                    empleados_turno,
+                    x="Shift",
+                    y="Employee",
+                    text=empleados_turno["Employee"].astype(str),
+                    color="Employee",
+                    color_continuous_scale="Agsunset",
+                    title="Empleados por Turno",
+                    labels={
+                        "Shift": "Turno",
+                        "Employee": "Empleados únicos"
+                    },
+                    height=500
+                )
+
+                # Personalización de layout y etiquetas
+                fig.update_traces(
+                    textposition='inside',
+                    insidetextanchor='middle'
+                )
+
+                fig.update_layout(
+                    xaxis_title="Turno",
+                    yaxis_title="Empleados únicos",
+                    xaxis=dict(showgrid=False),
+                    yaxis=dict(showgrid=True, gridcolor='lightgrey'),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    title_font=dict(size=18, color='white', family="Arial"),
+                    font=dict(size=12),
+                    margin=dict(t=50, l=50, r=30, b=50)
+                )
+
+                # Mostrar gráfico en Streamlit
+                st.plotly_chart(fig, use_container_width=True)
+
+            #Gráfica: Wo por Turno
+            with col_l:
                 # Agrupar por turno y contar WO únicos
                 wo_por_turno = (
                     df_wc.groupby("Shift")["Job #"]
