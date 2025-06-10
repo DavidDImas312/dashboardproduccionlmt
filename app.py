@@ -627,7 +627,7 @@ if check_password():
             # Gráfica 8: Non-production by W/C
             with col_h:
             # Eliminar jobs duplicados para esta gráfica
-                df_unique = df_wc.drop_duplicates(subset=["Job #"])
+                df_unique = df_wc.drop_duplicates(subset=["Timesheet #"])
 
                 # Agrupar y sumar las Non-production Downtime Hours por W/C
                 non_prod_wc = (
