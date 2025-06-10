@@ -686,8 +686,11 @@ if check_password():
 
             # Gráfica 9: Scrap por W/C
             with col_i:
+                # Filtrar TimeSheet únicos antes de agrupar
+                df_unique_timesheet_scrap = df_wc.drop_duplicates(subset=["Timesheet #"])
+
                 scrap_wc = (
-                    df_wc.groupby("W/C")["Scrap"]
+                    df_unique_timesheet_scrap.groupby("W/C")["Scrap"]
                     .sum()
                     .reset_index()
                     .sort_values(by="Scrap", ascending=False)
