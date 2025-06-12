@@ -43,11 +43,7 @@ def cargar_programacion(file):
         df[col] = pd.to_datetime(df[col], errors='coerce')
     return df, None
 
-
-# ====================================
 # 🧮 CONVERSIÓN DE COLUMNAS
-# ====================================
-
 def convertir_columnas_fecha(df, columnas):
     """Convierte las columnas especificadas a formato datetime."""
     for col in columnas:
@@ -60,10 +56,7 @@ def convertir_columnas_numericas(df, columnas):
     df[columnas] = df[columnas].apply(pd.to_numeric, errors='coerce')
     return df
 
-# ====================================
 # 🔍 FILTROS (sección para agregar)
-# ====================================
-
 def get_unique_values(df, column):
     """Devuelve valores únicos ordenados para un filtro dado."""
     return sorted(df[column].dropna().unique())
@@ -80,35 +73,8 @@ def filter_by_columns(df, filters):
             df = df[df[column] == value]
     return df
 
-# ====================================
-# Exportar información a excel
-# ====================================
 
-def exportar_varias_hojas_excel(diccionario_dfs, nombre_base="Reporte_Produccion"):
-    output = io.BytesIO()
-    
-     # Obtener fecha y hora actual
-    fecha_hora_actual = datetime.now().strftime("%Y%m%d_%H%M")
-    # Construir nombre de archivo con timestamp
-    nombre_archivo = f"{nombre_base}_{fecha_hora_actual}.xlsx"
-
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        for nombre_hoja, df in diccionario_dfs.items():
-            df.to_excel(writer, sheet_name=nombre_hoja, index=False)
-
-    output.seek(0)
-
-    st.download_button(
-        label="📥 Descargar Excel con reportes",
-        data=output,
-        file_name=nombre_archivo,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-# ====================================
 # Razones de DownTime
-# ====================================
-
 catalogo_downtime = pd.DataFrame({
     "Reason ID": [
         "D001", "D002", "D003", "D004", "D005", "D006", "D007", "D008", "D009", "D010",
@@ -147,16 +113,21 @@ catalogo_downtime = pd.DataFrame({
     ]
 })
 
-# ====================================
 # Extraer DownTime
-# ====================================
-
 def cargar_downtime(file):
     try:
-        df_raw = pd.read_excel(file, header=None, names=["WorkCenter", "TotalHours"])
-        df_raw["TotalHours"] = pd.to_numeric(df_raw["TotalHours"], errors='coerce')
+        df_raw = pd.read_excel(
+            file,
+            header=0,               
+            usecols="A:B",
+            skiprows=1,          
+            skipfooter=1,        
+            engine="openpyxl"    
+        )
+        df_raw.columns = ["WorkCenter", "TotalHours"]
         return df_raw
     except Exception as e:
+        print(f"Error al cargar downtime: {e}")
         return None
 
 def extraer_downtime(df):
@@ -184,10 +155,7 @@ def extraer_downtime(df):
 
     return pd.DataFrame(data)
 
-# ====================================
 # Filtros DownTime
-# ====================================
-
 def filtrar_downtime(df_downtime, fechas=None, turnos=None, wc_types=None, wcs=None):
     df_filtrado = df_downtime.copy()
 
@@ -211,3 +179,41 @@ def filtrar_downtime(df_downtime, fechas=None, turnos=None, wc_types=None, wcs=N
             df_filtrado = df_filtrado[df_filtrado["W/C"].isin(wcs)]
 
     return df_filtrado
+
+# Función para cargar cualquier archivo y extraer solo las columnas requeridas
+def cargar_datos_columnas_requeridas(file, columnas_requeridas, skiprows=0):
+    """Carga un archivo Excel, limpia encabezados y devuelve columnas requeridas."""
+    try:
+        df = pd.read_excel(file, skiprows=skiprows)
+
+        # Limpiar nombres de columnas
+        df.columns = (
+            df.columns.str.replace(r"\s+", " ", regex=True)
+                      .str.strip()
+        )
+
+        # Verificar columnas disponibles
+        columnas_disponibles = df.columns.tolist()
+        columnas_faltantes = [col for col in columnas_requeridas if col not in columnas_disponibles]
+
+        if columnas_faltantes:
+            return None, f"Faltan las siguientes columnas: {columnas_faltantes}"
+
+        # Filtrar solo las columnas requeridas
+        df_filtrado = df[columnas_requeridas]
+
+        # Limpiar espacios extra en los valores string
+        for col in df_filtrado.columns:
+            if df_filtrado[col].dtype == 'object':
+                df_filtrado[col] = df_filtrado[col].astype(str).str.strip()
+                df_filtrado[col] = df_filtrado[col].replace(
+                    to_replace=['-', 'N/A', 'nan', 'None', 'NaT'], value=pd.NA
+                )
+
+        # Eliminar filas completamente vacías en las columnas requeridas
+        df_filtrado = df_filtrado.dropna(how='all', subset=columnas_requeridas)
+
+        return df_filtrado, None
+
+    except Exception as e:
+        return None, f"Error al cargar el archivo: {str(e)}"

@@ -29,7 +29,7 @@ def check_password():
 
 if check_password():
 
-    from utils import cargar_reporte_produccion, cargar_programacion, required_columns, required_columns_plan, exportar_varias_hojas_excel, catalogo_downtime, cargar_downtime, extraer_downtime, filtrar_downtime
+    from utils import cargar_reporte_produccion, cargar_programacion, required_columns, required_columns_plan, catalogo_downtime, cargar_downtime, extraer_downtime, filtrar_downtime, cargar_datos_columnas_requeridas
 
     st.set_page_config(page_title="Análisis de Reportes de Producción", layout="wide")
 
@@ -45,21 +45,24 @@ if check_password():
 
     # Pantalla de Inicio
     if option == "Inicio":
-        st.header("📥 Importar Reporte Production Efficiency")
+        st.header("📥 Importar Reporte Production Timecard")
         uploaded_file = st.file_uploader("Selecciona el archivo Excel del reporte", type=["xlsx"])
 
         if uploaded_file is not None:
-            df, error_cols = cargar_reporte_produccion(uploaded_file)
+            df, error = cargar_datos_columnas_requeridas(uploaded_file, required_columns, skiprows=4)
+
             if df is None:
-                st.error("❌ Las columnas no coinciden.")
-                st.write("Se esperaban:")
-                st.write(required_columns)
-                st.write("Se encontraron:")
-                st.write(error_cols)
+                st.error(f"❌ {error}")
                 st.stop()
 
+            # Verificar si alguna columna requerida no está presente
+            columnas_faltantes = [col for col in required_columns if col not in df.columns]
+            if columnas_faltantes:
+                st.warning("⚠️ Estas columnas no se encontraron en el archivo:")
+                st.write(columnas_faltantes)
+
             st.session_state.df_clean = df
-            st.success("✅ Archivo cargado y validado.")
+            st.success("✅ Archivo cargado y columnas requeridas extraídas.")
             if st.checkbox("Mostrar datos cargados"):
                 st.dataframe(df)
 
@@ -67,20 +70,23 @@ if check_password():
         uploaded_plan = st.file_uploader("Selecciona el archivo Excel de la programación", type=["xlsx"], key="plan")
 
         if uploaded_plan is not None:
-            df_plan, error_cols = cargar_programacion(uploaded_plan)
+            df_plan, error = cargar_datos_columnas_requeridas(uploaded_plan, required_columns_plan, skiprows=5)
+
             if df_plan is None:
-                st.error("❌ Las columnas del archivo de programación no coinciden.")
-                st.write("Se esperaban:")
-                st.write(required_columns_plan)
-                st.write("Se encontraron:")
-                st.write(error_cols)
+                st.error(f"❌ {error}")
                 st.stop()
+
+            # Verificar si alguna columna requerida no está presente
+            columnas_faltantes = [col for col in required_columns_plan if col not in df_plan.columns]
+            if columnas_faltantes:
+                st.warning("⚠️ Estas columnas no se encontraron en el archivo:")
+                st.write(columnas_faltantes)
 
             st.session_state.df_plan = df_plan
             st.success("✅ Archivo de programación cargado.")
             if st.checkbox("Mostrar datos de programación"):
                 st.dataframe(df_plan)
-        
+    
         st.header("📥 Importar Reporte Downtime por W/C")
         uploaded_downtime = st.file_uploader("Selecciona el archivo Excel de Downtime", type=["xlsx"], key="downtime")
 
