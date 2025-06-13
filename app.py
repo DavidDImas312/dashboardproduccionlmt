@@ -293,10 +293,12 @@ if check_password():
                 # Mostrar gráfico en Streamlit
                 st.plotly_chart(fig, use_container_width=True)
 
-          # Gráfica 2: Partes Producidas por W/C
+            # Gráfica 2: Partes Producidas por W/C
             with col_b:
+                # Filtrar TimeSheet únicos antes de agrupar
+                df_unique_timesheet_parts = df_wc.drop_duplicates(subset=["Timesheet #"])
                 quantity_wc = (
-                    df_wc.groupby("W/C")["Quantity"]
+                    df_unique_timesheet_parts.groupby("W/C")["Quantity"]
                     .sum()
                     .reset_index()
                     .sort_values(by="Quantity", ascending=True)
