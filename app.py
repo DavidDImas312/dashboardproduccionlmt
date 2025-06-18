@@ -153,7 +153,7 @@ if check_password():
             col1.metric("Eficiencia Promedio", f'{df_filtrado["Efficiency"].mean():.2f}%')
             col2.metric("OEE Promedio", f'{df_filtrado["OEE"].mean():.2f}%')
             col4.metric("Horas No-Producción", f'{df_filtrado_unique["Non-production Downtime Hours"].sum():,.2f}')        
-            col3.metric("Cantidad Producida", f'{df_filtrado["Quantity"].sum():,.0f}')
+            col3.metric("Cantidad Producida", f'{df_filtrado_unique["Quantity"].sum():,.0f}')
 
             
             # Obtener lista única de W/C disponibles
