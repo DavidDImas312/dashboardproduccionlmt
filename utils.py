@@ -26,6 +26,7 @@ required_columns_plan = [
 date_columns_plan = ['Ship Date', 'Due', 'Order Due', 'Job Created On', 'Starts On', 'Ends On']
 
 # Función para cargar Production Efficiency
+@st.cache_data
 def cargar_reporte_produccion(file):
     df = pd.read_excel(file)
     if list(df.columns) != required_columns:
@@ -35,6 +36,7 @@ def cargar_reporte_produccion(file):
     return df, None
 
 # Función para cargar Scheduled Jobs
+@st.cache_data
 def cargar_programacion(file):
     df = pd.read_excel(file)
     if list(df.columns) != required_columns_plan:
@@ -114,6 +116,7 @@ catalogo_downtime = pd.DataFrame({
 })
 
 # Extraer DownTime
+@st.cache_data
 def cargar_downtime(file):
     try:
         df_raw = pd.read_excel(
@@ -181,6 +184,7 @@ def filtrar_downtime(df_downtime, fechas=None, turnos=None, wc_types=None, wcs=N
     return df_filtrado
 
 # Función para cargar cualquier archivo y extraer solo las columnas requeridas
+@st.cache_data
 def cargar_datos_columnas_requeridas(file, columnas_requeridas, skiprows=0):
     """Carga un archivo Excel, limpia encabezados y devuelve columnas requeridas."""
     try:
