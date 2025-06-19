@@ -893,7 +893,7 @@ def dashboard():
 
     #    exportar_varias_hojas_excel(diccionario_dfs)
 
-    # Gráfica 11: Cumplimiento al Plan de Producción (solo este bloque usa su propio filtro)
+    # Gráfica 11: Cumplimiento al Plan de Producción por W/C
     st.subheader("📈 Cumplimiento al Plan de Producción por W/C")
 
     if st.session_state.df_plan is not None:
@@ -911,9 +911,9 @@ def dashboard():
                     key="wc_type_local"
                 )
 
-                df_plan_filtrado = df_plan[df_plan["W/C Type"] == selected_wc_type_local]
+                df_plan_filtrado_local = df_plan[df_plan["W/C Type"] == selected_wc_type_local]
 
-                wc_local = df_plan_filtrado["W/C"].unique().tolist()
+                wc_local = df_plan_filtrado_local["W/C"].unique().tolist()
 
                 selected_wc_local = st.multiselect(
                     "Selecciona W/C (puedes elegir varios o dejar vacío para todos):",
@@ -922,9 +922,11 @@ def dashboard():
                 )
 
         if selected_wc_local:
-            df_plan_filtrado = df_plan_filtrado[df_plan_filtrado["W/C"].isin(selected_wc_local)]
+            df_plan_filtrado_local = df_plan_filtrado_local[df_plan_filtrado_local["W/C"].isin(selected_wc_local)]
 
-        cumplimiento_plan = df_plan_filtrado.groupby("W/C")[["To Make", "Produced"]].sum().reset_index()
+        # Cumplimiento Agrupado
+        cumplimiento_plan = df_plan_filtrado_local.groupby("W/C")[
+            ["To Make", "Produced", "Can Make", "Remaining"]].sum().reset_index()
 
         cumplimiento_plan["Cumplimiento (%)"] = (
                 (cumplimiento_plan["Produced"] / cumplimiento_plan["To Make"]) * 100
@@ -933,7 +935,7 @@ def dashboard():
 
         cumplimiento_plan = cumplimiento_plan.sort_values(by="Cumplimiento (%)", ascending=True)
 
-        # Gráfica con Plotly
+        # Gráfica Cumplimiento
         fig = px.bar(
             cumplimiento_plan,
             x="W/C",
@@ -946,12 +948,47 @@ def dashboard():
             height=450
         )
 
-        fig.update_traces(
-            textposition='outside'
-        )
+        fig.update_traces(textposition='outside')
 
         fig.update_layout(
-            yaxis=dict(range=[0, 120], showgrid=True, gridcolor='lightgrey'),
+            yaxis=dict(showgrid=True, gridcolor='lightgrey'),
+            xaxis=dict(showgrid=False),
+            plot_bgcolor='rgba(0,0,0,0)',
+            title_font=dict(size=18),
+            font=dict(size=12),
+            margin=dict(t=50, l=50, r=30, b=50),
+            showlegend=False,
+            autosize=True
+        )
+
+        # Elimina límite inferior para permitir negativos
+        fig.update_yaxes(automargin=True)
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Gráfica de piezas faltantes
+        st.subheader("Piezas faltantes para cumplimiento")
+
+        piezas_faltantes = df_plan_filtrado_local.groupby("W/C")[["Can Make", "Remaining"]].sum().reset_index()
+        piezas_faltantes["Piezas Faltantes"] = (piezas_faltantes["Can Make"] - piezas_faltantes["Remaining"])
+        piezas_faltantes = piezas_faltantes.sort_values(by="Piezas Faltantes", ascending=True)
+
+        fig_faltantes = px.bar(
+            piezas_faltantes,
+            x="W/C",
+            y="Piezas Faltantes",
+            text=piezas_faltantes["Piezas Faltantes"],
+            color="Piezas Faltantes",
+            color_continuous_scale="oranges",
+            title=f'Piezas Faltantes ({selected_wc_type_local})',
+            labels={"Piezas Faltantes": "Piezas Faltantes", "W/C": "Centro de Trabajo"},
+            height=450,
+        )
+
+        fig_faltantes.update_traces(textposition="outside")
+
+        fig_faltantes.update_layout(
+            yaxis=dict(showgrid=True, gridcolor='lightgrey'),
             xaxis=dict(showgrid=False),
             plot_bgcolor='rgba(0,0,0,0)',
             title_font=dict(size=18),
@@ -960,53 +997,15 @@ def dashboard():
             showlegend=False
         )
 
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Gráfica de piezas faltantes para cobertura del plan de producción
-        if st.session_state.df_plan is not None:
-            st.subheader("Piezas faltantes para cumplimiento")
-
-            if selected_wc_local:
-                df_plan_filtrado = df_plan_filtrado[df_plan_filtrado["W/C"].isin(selected_wc_local)]
-
-            piezas_faltantes = df_plan_filtrado.groupby("W/C")[["Can Make", "Remaining"]].sum().reset_index()
-            piezas_faltantes["Piezas Faltantes"] = (
-                        piezas_faltantes["Can Make"] - piezas_faltantes["Remaining"]).clip(lower=0)
-            piezas_faltantes = piezas_faltantes.sort_values(by="Piezas Faltantes", ascending=False)
-
-            # Gráfica
-            fig_faltantes = px.bar(
-                piezas_faltantes,
-                x="W/C",
-                y="Piezas Faltantes",
-                text=piezas_faltantes["Piezas Faltantes"],
-                color="Piezas Faltantes",
-                color_continuous_scale="oranges",
-                title=f'Piezas Faltantes ({selected_wc_type_local})',
-                labels={"Piezas Faltantes": "Piezas Faltantes", "W/C": "Centro de Trabajo"},
-                height=450,
-            )
-
-            fig_faltantes.update_traces(
-                textposition="outside"
-            )
-
-            fig_faltantes.update_layout(
-                yaxis=dict(showgrid=True, gridcolor='lightgrey'),
-                xaxis=dict(showgrid=False),
-                plot_bgcolor='rgba(0,0,0,0)',
-                title_font=dict(size=18),
-                font=dict(size=12),
-                margin=dict(t=50, l=50, r=30, b=50),
-                showlegend=False
-            )
-            st.plotly_chart(fig_faltantes, use_container_width=True)
+        st.plotly_chart(fig_faltantes, use_container_width=True)
 
         # Mostrar tablas
         st.subheader("📄 Datos Filtrados para Cumplimiento al Plan")
-        st.dataframe(df_plan_filtrado[["W/C Type", "W/C", "Job #", "Item", "To Make", "Can Make", "Produced"]])
+        st.dataframe(df_plan_filtrado_local[
+                         ["W/C Type", "W/C", "Job #", "Item", "To Make", "Can Make", "Remaining", "Produced"]])
 
         st.subheader("📊 Cumplimiento Agrupado por W/C")
         st.dataframe(cumplimiento_plan)
+
     else:
         st.info("Carga primero el archivo de Scheduled Jobs para mostrar esta gráfica.")

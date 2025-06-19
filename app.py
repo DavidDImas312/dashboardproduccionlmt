@@ -53,21 +53,8 @@ if check_password():
 
 #Pie de página
     st.markdown("""
-    <style>
-    .footer {
-        position: fixed;
-        bottom: 0;
-        width: 100%;
-        color: gray;
-        text-align: center;
-        font-size: 12px;
-        font-color: white;
-        padding: 10px 0;
-        border-top: 1px solid #ddd;
-    }
-    </style>
-
-    <div class="footer">
-        📊 <strong>Lamtec Tool</strong> | Desarrollado por DDIMAS | Versión 1.0 | © 2025 Lamtec México
+    <hr style="border: 1px solid #ccc;">
+    <div style="text-align: center; font-size: 12px; color: gray; padding-top: 10px;">
+        📊 <strong>Lamtec Tool</strong> | Desarrollado por DDIMAS | Versión 1.7 | © 2025 Lamtec México
     </div>
     """, unsafe_allow_html=True)
