@@ -55,6 +55,6 @@ if check_password():
     st.markdown("""
     <hr style="border: 1px solid #ccc;">
     <div style="text-align: center; font-size: 12px; color: gray; padding-top: 10px;">
-        📊 <strong>Lamtec Tool</strong> | Desarrollado por DDIMAS | Versión 1.7 | © 2025 Lamtec México
+        ⚙️ <strong>Lamtec Tool</strong> | Desarrollado por DDIMAS | Versión 1.7 | © 2025 Lamtec México
     </div>
     """, unsafe_allow_html=True)

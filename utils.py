@@ -221,3 +221,51 @@ def cargar_datos_columnas_requeridas(file, columnas_requeridas, skiprows=0):
 
     except Exception as e:
         return None, f"Error al cargar el archivo: {str(e)}"
+
+def leer_mrp_excel(ruta_archivo, hoja=0):
+    df_raw = pd.read_excel(ruta_archivo, sheet_name=hoja)
+
+    df_po_rows = []
+    df_sin_req_rows = []
+
+    current_item = None
+    current_type = None
+
+    for _, row in df_raw.iterrows():
+        item = row.iloc[0]
+        referencia = str(row.iloc[1])
+        type_col = row.iloc[4]
+        on_hand = row.iloc[6]
+        demand_total = row.iloc[11]
+        vendor = row.iloc[3]
+
+        # Si es encabezado de Item
+        if pd.notna(item):
+            current_item = item
+            current_type = type_col
+
+            # Si en columna J no hay valor o es 0 —> sin requerimiento
+            if pd.isna(row.iloc[9]) or row.iloc[9] == 0:
+                df_sin_req_rows.append({
+                    'Item': current_item,
+                    'Type': current_type,
+                    'Vendor': vendor,
+                    'On Hand': on_hand,
+                    'Demand Total': demand_total
+                })
+
+        # Si es Purchase Order
+        if "Purchase Order" in referencia:
+            df_po_rows.append({
+                'Item': current_item,
+                'Type': current_type,
+                'Fecha Llegada': row.iloc[2],
+                'Fecha Envío': row.iloc[3],
+                'Cantidad': row.iloc[4],
+                'Proveedor_PO': row.iloc[5]
+            })
+
+    df_po = pd.DataFrame(df_po_rows)
+    df_sin_requerimiento = pd.DataFrame(df_sin_req_rows)
+
+    return df_po, df_sin_requerimiento
