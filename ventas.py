@@ -160,7 +160,7 @@ def comparativa_grafica():
     ventas_mes = ventas_mes.sort_values("Amount", ascending=True)
 
     fig_mes = px.bar(ventas_mes, x="Customer", y="Amount", text_auto=".2s", color="Amount",
-                     color_continuos="", title=f"Ventas por Cliente{titulo_mes}")
+                     color_continuous_scale="earth", title=f"Ventas por Cliente{titulo_mes}")
     fig_mes.update_yaxes(tickformat="$,.2f")
     st.plotly_chart(fig_mes, use_container_width=True)
 
