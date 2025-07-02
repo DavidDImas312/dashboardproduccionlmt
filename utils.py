@@ -25,6 +25,20 @@ required_columns_plan = [
 
 date_columns_plan = ['Ship Date', 'Due', 'Order Due', 'Job Created On', 'Starts On', 'Ends On']
 
+
+columnas_orders = [
+    "Week Of", "Ship From", "Customer", "Ship To", "Item", "On Hand",
+    "Customer PO", "Order #", "Customer Item", "Wanted On", "Ship On",
+    "Quantity", "Unit Price", "U/M", "Amount", "Firm/Planned"
+]
+
+columnas_sales = [
+    "Week Of", "Invoice Date", "Posting Date", "Ship From", "Market Type",
+    "Customer", "Ship To", "Item", "Customer PO", "Customer Item", "Quantity",
+    "Unit Price", "Std Cost", "Total Cost", "U/M", "Amount", "Margin",
+    "G/L Account", "Currency", "Invoice #", "P/S #", "Order#"
+]
+
 # Función para cargar Production Efficiency
 @st.cache_data
 def cargar_reporte_produccion(file):

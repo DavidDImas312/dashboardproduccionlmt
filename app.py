@@ -7,6 +7,7 @@ import plotly.express as px
 from PIL import Image
 from production import produccion_app
 from mrp import mrp_app
+from ventas import ventas_app
 
 
 PASSWORD = ")ufIuabDoyH"
@@ -42,7 +43,7 @@ if check_password():
 
     #st.title("⚙️ Lamtec Tool")
     st.sidebar.title("Aplicaciones Disponibles")
-    menu = ["Producción", "MRP"]
+    menu = ["Producción", "MRP", "Management"]
     option = st.sidebar.selectbox("Menú:", menu)
     # Pantalla de Inicio
     if option == "Producción":
@@ -50,6 +51,8 @@ if check_password():
         produccion_app()
     elif option == "MRP":
         mrp_app()
+    elif option == "Management":
+        ventas_app()
 
 #Pie de página
     st.markdown("""
