@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from utils import cargar_datos_columnas_requeridas, convertir_columnas_fecha
 
 
@@ -125,6 +126,13 @@ def comparativa_grafica():
     resumen_completo.fillna(0, inplace=True)
     resumen_completo["Diferencia"] = resumen_completo["Vendido"] - resumen_completo["Pronosticado"]
 
+    col3, col4 = st.columns(2)
+    with col3:
+        st.metric("Órdenes Pronosticadas", f"${df_orders['Amount'].sum():,.2f}")
+    with col4:
+        st.metric("Ventas Totales", f"${df_sales['Amount'].sum():,.2f}")
+
+
     # 📊 Top 5 Clientes con Más Ventas en el periodo seleccionado
     resumen_ventas_periodo = df_sales_periodo.groupby("Customer")["Amount"].sum().reset_index(name="Vendido")
 
@@ -146,22 +154,72 @@ def comparativa_grafica():
             st.write("### 📈 Top 5 con Más Ventas Realizadas")
             st.dataframe(top_mas.style.format({"Vendido": "${:,.2f}"}))
 
+
     # 📊 Ventas por Cliente (solo filtra por periodo)
     st.subheader("📊 Ventas por Cliente")
 
+    # 📌 Obtener lista de clientes únicos
+    clientes_unicos = sorted(set(df_orders["Customer"].dropna()).union(set(df_sales["Customer"].dropna())))
+
+    # 📌 Expander con multiselect
+    with st.expander("🔎 Filtro opcional por Cliente"):
+        clientes_seleccionados = st.multiselect("Selecciona uno o más clientes", clientes_unicos)
+
+    # 📌 Filtrar por periodo
     if periodo_dt:
-        ventas_mes = df_sales_periodo.groupby("Customer")["Amount"].sum().reset_index()
+        ventas_mes = df_sales_periodo.groupby("Customer")["Amount"].sum().reset_index(name="Vendido")
+        pron_mes = df_orders_periodo.groupby("Customer")["Amount"].sum().reset_index(name="Pronosticado")
         titulo_mes = f" en {periodo_seleccionado}"
     else:
-        ventas_mes = df_sales.groupby("Customer")["Amount"].sum().reset_index()
+        ventas_mes = df_sales.groupby("Customer")["Amount"].sum().reset_index(name="Vendido")
+        pron_mes = df_orders.groupby("Customer")["Amount"].sum().reset_index(name="Pronosticado")
         titulo_mes = " (Todos los periodos)"
 
-    # 📌 Ordenar de menor a mayor
-    ventas_mes = ventas_mes.sort_values("Amount", ascending=True)
+    # 📌 Unir ambos DataFrames
+    df_ventas_completo = pd.merge(ventas_mes, pron_mes, on="Customer", how="outer").fillna(0)
 
-    fig_mes = px.bar(ventas_mes, x="Customer", y="Amount", text_auto=".2s", color="Amount",
-                     color_continuous_scale="earth", title=f"Ventas por Cliente{titulo_mes}")
-    fig_mes.update_yaxes(tickformat="$,.2f")
+    # 📌 Filtrar si se seleccionaron clientes específicos
+    if clientes_seleccionados:
+        df_ventas_completo = df_ventas_completo[df_ventas_completo["Customer"].isin(clientes_seleccionados)]
+
+    # 📌 Ordenar por ventas
+    df_ventas_completo = df_ventas_completo.sort_values("Vendido", ascending=True)
+
+    # 📊 Gráfica combinada
+    fig_mes = go.Figure()
+
+    fig_mes.add_trace(go.Bar(
+        x=df_ventas_completo["Customer"],
+        y=df_ventas_completo["Vendido"],
+        name="Vendido",
+        marker_color="#F58518",
+        text=df_ventas_completo["Vendido"],
+        texttemplate="%{text:$,.0f}",
+        textposition="outside"
+    ))
+
+    fig_mes.add_trace(go.Scatter(
+        x=df_ventas_completo["Customer"],
+        y=df_ventas_completo["Pronosticado"],
+        mode="lines+markers",
+        name="Pronosticado",
+        line=dict(color="#1f77b4", width=3),
+        marker=dict(size=6),
+        hovertemplate="Pronosticado: %{y:$,.2f}<br>Cliente: %{x}<extra></extra>"
+    ))
+
+    fig_mes.update_layout(
+        title=f"Ventas vs Pronóstico por Cliente{titulo_mes}",
+        xaxis_title="Cliente",
+        yaxis_title="Monto ($)",
+        yaxis_tickformat="$,.2f",
+        barmode="group",
+        hovermode="x unified",
+        template="plotly_white",
+        xaxis_tickangle=-45,
+        height=500
+    )
+
     st.plotly_chart(fig_mes, use_container_width=True)
 
     if cliente_seleccionado != "Todos" and periodo_dt:
