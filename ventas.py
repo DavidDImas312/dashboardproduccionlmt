@@ -171,9 +171,14 @@ def comparativa_grafica():
         pron_mes = df_orders_periodo.groupby("Customer")["Amount"].sum().reset_index(name="Pronosticado")
         titulo_mes = f" en {periodo_seleccionado}"
     else:
+        # ✅ NUEVO: limitar pronóstico hasta la última venta real
+        fecha_max_ventas = df_sales["Invoice Date"].max()
+        df_orders_filtrado = df_orders[df_orders["Ship On"] <= fecha_max_ventas]
+
         ventas_mes = df_sales.groupby("Customer")["Amount"].sum().reset_index(name="Vendido")
-        pron_mes = df_orders.groupby("Customer")["Amount"].sum().reset_index(name="Pronosticado")
+        pron_mes = df_orders_filtrado.groupby("Customer")["Amount"].sum().reset_index(name="Pronosticado")
         titulo_mes = " (Todos los periodos)"
+
 
     # 📌 Unir ambos DataFrames
     df_ventas_completo = pd.merge(ventas_mes, pron_mes, on="Customer", how="outer").fillna(0)
@@ -222,6 +227,80 @@ def comparativa_grafica():
 
     st.plotly_chart(fig_mes, use_container_width=True)
 
+    st.subheader("📈 Ventas vs Pronóstico por Mes")
+
+    # 📌 Copia y conversión de fechas
+    df_orders_mes = df_orders.copy()
+    df_sales_mes = df_sales.copy()
+
+    df_orders_mes = convertir_columnas_fecha(df_orders_mes, ["Ship On"])
+    df_sales_mes = convertir_columnas_fecha(df_sales_mes, ["Invoice Date"])
+
+    # 📌 Crear columna de periodo mensual (primer día del mes)
+    df_orders_mes["Periodo"] = df_orders_mes["Ship On"].dt.to_period("M").dt.to_timestamp()
+    df_sales_mes["Periodo"] = df_sales_mes["Invoice Date"].dt.to_period("M").dt.to_timestamp()
+
+    # 📌 Agrupar por mes
+    ventas_por_mes = df_sales_mes.groupby("Periodo")["Amount"].sum().reset_index(name="Vendido")
+    pronostico_por_mes = df_orders_mes.groupby("Periodo")["Amount"].sum().reset_index(name="Pronosticado")
+
+    # 📌 Generar rango completo de meses
+    min_fecha = min(ventas_por_mes["Periodo"].min(), pronostico_por_mes["Periodo"].min())
+    max_fecha = max(ventas_por_mes["Periodo"].max(), pronostico_por_mes["Periodo"].max())
+    rango_meses = pd.date_range(start=min_fecha, end=max_fecha, freq="MS")
+
+    df_base = pd.DataFrame({"Periodo": rango_meses})
+
+    # 📌 Unir datos con la base completa de meses
+    df_mes = df_base.merge(ventas_por_mes, on="Periodo", how="left")
+    df_mes = df_mes.merge(pronostico_por_mes, on="Periodo", how="left")
+    df_mes.fillna(0, inplace=True)
+    df_mes = df_mes.sort_values("Periodo")
+
+    # 📊 Gráfica combinada
+    fig_mes_tendencia = go.Figure()
+
+    fig_mes_tendencia.add_trace(go.Bar(
+        x=df_mes["Periodo"],
+        y=df_mes["Vendido"],
+        name="Vendido",
+        marker_color="#F58518",
+        text=df_mes["Vendido"],
+        texttemplate="%{text:$,.0f}",
+        textposition="outside"
+    ))
+
+    fig_mes_tendencia.add_trace(go.Scatter(
+        x=df_mes["Periodo"],
+        y=df_mes["Pronosticado"],
+        mode="lines+markers",
+        name="Pronosticado",
+        line=dict(color="#1f77b4", width=3),
+        marker=dict(size=6),
+        hovertemplate="Pronosticado: %{y:$,.2f}<br>Mes: %{x|%B %Y}<extra></extra>"
+    ))
+
+    fig_mes_tendencia.update_layout(
+        title="📊 Tendencia Mensual: Ventas vs Pronóstico",
+        xaxis_title="Mes",
+        yaxis_title="Monto ($)",
+        yaxis_tickformat="$,.2f",
+        barmode="group",
+        hovermode="x unified",
+        template="plotly_white",
+        height=500
+    )
+
+    # ✅ Mostrar todos los meses en el eje X
+    fig_mes_tendencia.update_xaxes(
+        type="date",
+        tickformat="%b %Y",
+        tickangle=-45,
+        tickvals=df_mes["Periodo"]
+    )
+
+    st.plotly_chart(fig_mes_tendencia, use_container_width=True)
+
     if cliente_seleccionado != "Todos" and periodo_dt:
         # 📊 Selector de tipo de gráfica
         tipo_grafica = st.sidebar.radio("📈 Tipo de gráfica:", ["Barras", "Líneas", "Dispersión", "Área"])
@@ -251,28 +330,31 @@ def comparativa_grafica():
         if tipo_grafica == "Líneas":
             fig = px.line(resumen_melt, x="Periodo", y="Monto", color="Tipo", line_group="Customer",
                           custom_data=["Customer"], color_discrete_map=colores_personalizados,
-                          title=f"Pronosticado vs Vendido ({agrupacion})")
+                          title=f"Pronosticado vs Vendido: {cliente_seleccionado} - ({agrupacion})")
 
         elif tipo_grafica == "Dispersión":
             fig = px.scatter(resumen_melt, x="Periodo", y="Monto", color="Tipo", symbol="Customer",
                              custom_data=["Customer"], color_discrete_map=colores_personalizados,
-                             title=f"Dispersión Pronosticado vs Vendido ({agrupacion})")
+                             title=f"Dispersión Pronosticado vs Vendido: {cliente_seleccionado} - ({agrupacion})")
 
         elif tipo_grafica == "Área":
             fig = px.area(resumen_melt, x="Periodo", y="Monto", color="Tipo", line_group="Customer",
                           custom_data=["Customer"], color_discrete_map=colores_personalizados,
-                          title=f"Área Acumulada Pronosticado vs Vendido ({agrupacion})")
+                          title=f"Área Acumulada Pronosticado vs Vendido: {cliente_seleccionado} - ({agrupacion})")
 
         elif tipo_grafica == "Barras":
             fig = px.bar(resumen_melt, x="Periodo", y="Monto", color="Tipo",
                          barmode="group", custom_data=["Customer"],
                          color_discrete_map=colores_personalizados,
-                         title=f"Pronosticado vs Vendido ({agrupacion})")
+                         title=f"Pronosticado vs Vendido: {cliente_seleccionado} - ({agrupacion})")
 
         # 📌 Ajustes comunes a todas las gráficas
         fig.update_yaxes(tickformat="$,.2f")
         fig.update_traces(hovertemplate="<b>%{x}</b><br>Cliente: %{customdata[0]}<br>Monto: %{y:$,.2f}<extra></extra>")
-        fig.update_xaxes(type="date", rangeslider_visible=True)
+        fig.update_xaxes(type="date", 
+                        tickformat="%b %Y",
+                        tickangle=-45,
+                        tickvals=df_mes["Periodo"])
         fig.update_layout(legend_title_text="Concepto", hovermode="x unified")
 
         st.plotly_chart(fig, use_container_width=True)
