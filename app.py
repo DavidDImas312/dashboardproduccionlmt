@@ -8,7 +8,7 @@ from PIL import Image
 from production import produccion_app
 from mrp import mrp_app
 from ventas import ventas_app
-
+from escalera import escalera_app
 
 PASSWORD = ")ufIuabDoyH"
 
@@ -43,7 +43,7 @@ if check_password():
 
     #st.title("⚙️ Lamtec Tool")
     st.sidebar.title("Aplicaciones Disponibles")
-    menu = ["Producción", "MRP", "Management"]
+    menu = ["Producción", "MRP", "Management", "Escaleras"]
     option = st.sidebar.selectbox("Menú:", menu)
     # Pantalla de Inicio
     if option == "Producción":
@@ -53,6 +53,8 @@ if check_password():
         mrp_app()
     elif option == "Management":
         ventas_app()
+    elif option == "Escaleras":
+        escalera_app()
 
 #Pie de página
     st.markdown("""

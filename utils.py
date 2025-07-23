@@ -1,8 +1,10 @@
 # utils.py
 import pandas as pd
 import streamlit as st
-import io 
+import io
+import plotly.express as px
 from datetime import datetime
+from io import BytesIO
 
 # Columnas requeridas para Production Efficiency
 required_columns = [
@@ -283,3 +285,112 @@ def leer_mrp_excel(ruta_archivo, hoja=0):
     df_sin_requerimiento = pd.DataFrame(df_sin_req_rows)
 
     return df_po, df_sin_requerimiento
+
+def cargar_archivos_estilo_escalera(archivos):
+    """
+    Carga múltiples archivos Excel con formato:
+    - Columna A = Item
+    - Columnas B en adelante = fechas con cantidades
+
+    Devuelve:
+    - DataFrame pivoteado con filas = Item + Snapshot, columnas = fechas
+    - Lista de versiones / snapshots
+    """
+    lista_df = []
+
+    for idx, file in enumerate(archivos):
+        nombre_snapshot = f"Archivo_{idx+1}"
+        df = pd.read_excel(file)
+
+        # Validación mínima
+        if df.shape[1] < 2:
+            st.warning(f"⚠️ El archivo {file.name} no tiene suficientes columnas.")
+            continue
+
+        # Renombrar primera columna como 'Item'
+        df.rename(columns={df.columns[0]: "Item"}, inplace=True)
+
+        # Transformar a formato largo
+        df_largo = df.melt(id_vars=["Item"], var_name="Fecha", value_name="Cantidad")
+        df_largo["Snapshot"] = nombre_snapshot
+        lista_df.append(df_largo)
+
+    if not lista_df:
+        st.error("❌ No se pudieron procesar los archivos.")
+        return None, []
+
+    # Combinar todo
+    df_todo = pd.concat(lista_df)
+
+    # Pivotear para mostrar como escalera: filas = Item + Snapshot, columnas = fechas
+    df_pivot = df_todo.pivot_table(
+        index=["Item", "Snapshot"],
+        columns="Fecha",
+        values="Cantidad",
+        aggfunc="first"
+    ).reset_index()
+
+    # Ordenar columnas de fecha (ignorando errores si son string)
+    try:
+        fechas_ordenadas = sorted([col for col in df_pivot.columns if isinstance(col, pd.Timestamp) or "-" in str(col)],
+                                  key=lambda x: pd.to_datetime(x, errors='coerce'))
+        df_pivot = df_pivot[["Item", "Snapshot"] + fechas_ordenadas]
+    except:
+        pass
+
+    # Agregar columna opcional de Release Date vacía
+    df_pivot["Release Date"] = ""
+
+    return df_pivot, [f"Archivo_{i+1}" for i in range(len(archivos))]
+
+
+def exportar_excel(df):
+    """
+    Genera archivo Excel descargable en memoria
+    """
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name="Escalera")
+    output.seek(0)
+    return output
+
+
+def graficar_evolucion_item(df, item):
+    """
+    Gráfica clara por ítem mostrando evolución por fecha en cada snapshot
+    """
+    import plotly.graph_objects as go
+
+    df_largo = df.melt(id_vars=["Item", "Snapshot"], var_name="Fecha", value_name="Cantidad")
+    df_largo = df_largo[df_largo["Item"] == item].dropna()
+
+    if df_largo.empty:
+        st.warning("No hay datos para graficar este ítem.")
+        return
+
+    # Asegurar formato de fechas
+    df_largo["Fecha"] = pd.to_datetime(df_largo["Fecha"], errors="coerce")
+    df_largo = df_largo.dropna(subset=["Fecha"]).sort_values("Fecha")
+
+    fig = go.Figure()
+
+    for snapshot in df_largo["Snapshot"].unique():
+        df_snapshot = df_largo[df_largo["Snapshot"] == snapshot]
+        fig.add_trace(go.Scatter(
+            x=df_snapshot["Fecha"],
+            y=df_snapshot["Cantidad"],
+            mode="lines+markers",
+            name=snapshot,
+            line=dict(width=2),
+            marker=dict(size=6)
+        ))
+
+    fig.update_layout(
+        title=f"Evolución de cantidades para '{item}' por fecha",
+        xaxis_title="Fecha",
+        yaxis_title="Cantidad",
+        legend_title="Versión",
+        hovermode="x unified"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
