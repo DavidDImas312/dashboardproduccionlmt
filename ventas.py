@@ -686,16 +686,17 @@ def analizar_forecast_compras():
 
         # Preparar datos
         df_calendario = df_filtrado.copy()
-        df_calendario["Mes"] = df_calendario["Wanted On"].dt.month_name(locale="es_MX")  # mes como nombre
+        df_calendario["Mes"] = df_calendario["Wanted On"].dt.month_name()
         df_calendario["Mes_Num"] = df_calendario["Wanted On"].dt.month
         df_calendario["Año"] = df_calendario["Wanted On"].dt.year
 
         # Ordenar meses correctamente
-        orden_meses = [
-            "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-            "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+        orden_meses_en = [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
         ]
-        df_calendario["Mes"] = pd.Categorical(df_calendario["Mes"], categories=orden_meses, ordered=True)
+
+        df_calendario["Mes"] = pd.Categorical(df_calendario["Mes"], categories=orden_meses_en, ordered=True)
 
         # Filtro de años
         años_disponibles = sorted(df_calendario["Año"].dropna().unique())
@@ -727,7 +728,63 @@ def analizar_forecast_compras():
 
         # Mostrar tabla
         st.dataframe(tabla_final.style.format("${:,.2f}"), use_container_width=True)
-   
+
+        # =========================
+        # 📈 GRÁFICA DE CANTIDADES POR MES/AÑO/TIPO
+        # =========================
+        st.markdown("### 📈 Gráfica de Cantidades por Tipo, Mes y Año")
+
+        # Usamos el mismo df_calendario filtrado
+        df_grafica = df_calendario.copy()
+
+        # Crear columna MesAño como etiqueta tipo Timestamp (inicio de mes)
+        df_grafica["MesAño"] = df_grafica["Wanted On"].dt.to_period("M").dt.to_timestamp()
+        df_grafica = df_grafica.sort_values("MesAño")
+
+        # Crear rango completo de meses desde el primer al último mes disponible
+        rango_meses = pd.date_range(
+            start=df_grafica["MesAño"].min(),
+            end=df_grafica["MesAño"].max(),
+            freq="MS"  # Month Start
+        )
+
+        # Obtener todos los tipos seleccionados
+        tipos = df_grafica["Type"].unique()
+
+        # Crear combinaciones de todos los meses con todos los tipos
+        index_completo = pd.MultiIndex.from_product([rango_meses, tipos], names=["MesAño", "Type"])
+
+        # Agrupar datos originales
+        df_grouped = df_grafica.groupby(["MesAño", "Type"])["Quantity"].sum()
+
+        # Reindexar para asegurar que todos los puntos estén presentes (incluso con 0)
+        df_grouped = df_grouped.reindex(index_completo, fill_value=0).reset_index()
+
+        # Crear gráfica
+        fig = px.line(
+            df_grouped,
+            x="MesAño",
+            y="Quantity",
+            color="Type",
+            markers=True,
+            title="Evolución Mensual de Compras por Tipo",
+            labels={"MesAño": "Mes", "Quantity": "Cantidad", "Type": "Tipo"}
+        )
+
+        fig.update_layout(
+            hovermode="x unified",
+            xaxis=dict(
+                tickformat="%b %Y",  # Formato 'Jan 2025'
+                tickmode="array",
+                tickvals=rango_meses,
+                tickangle=-45
+            ),
+            yaxis_title="Cantidad",
+            height=450
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
         # Descargar
         st.download_button(
             label="⬇️ Descargar tabla por mes en Excel",
