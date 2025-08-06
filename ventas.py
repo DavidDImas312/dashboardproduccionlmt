@@ -2,11 +2,11 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from utils import cargar_datos_columnas_requeridas, convertir_columnas_fecha
+from utils import cargar_datos_columnas_requeridas, convertir_columnas_fecha, convertir_columnas_numericas, filter_by_columns, exportar_excel
 
 
 def ventas_app():
-    menuventas = ["Importar Reportes", "Comparativa"]
+    menuventas = ["Importar Reportes", "Comparativa", "Órdenes por Plataforma", "Forecast de Compras"]
     option = st.sidebar.selectbox("Acciones:", menuventas)
 
     if option == "Importar Reportes":
@@ -14,6 +14,12 @@ def ventas_app():
 
     elif option == "Comparativa":
         comparativa_grafica()
+    
+    elif option == "Órdenes por Plataforma":
+        analizar_ordenes_por_plataforma()
+
+    elif option == "Forecast de Compras":
+        analizar_forecast_compras()
 
 def importar_ventas():
     st.subheader("📥 Cargar Archivos")
@@ -49,6 +55,7 @@ def importar_ventas():
             st.dataframe(df_sales)
 
 def comparativa_grafica():
+
     st.title("📊 Comparativa Pronóstico vs Ventas")
 
     # 📌 Validar que se hayan cargado previamente los archivos
@@ -396,3 +403,339 @@ def comparativa_grafica():
             st.dataframe(resumen_melt)
     else:
         st.info("Selecciona un cliente en el filtro lateral para ver más detalles.")
+
+def analizar_ordenes_por_plataforma():
+    st.subheader("📦 Análisis de Órdenes por Plataforma")
+
+    uploaded_orders = st.file_uploader("📄 Cargar archivo de órdenes", type=["xlsx"], key="orders_platform")
+
+    if uploaded_orders:
+        columnas_requeridas = [
+            "Week Of", "Ship From", "Customer", "Ship To", "Item", "On Hand",
+            "Customer PO", "Order #", "Customer Item", "Wanted On", "Ship On",
+            "Quantity", "Unit Price", "Amount", "Firm/Planned", "Platform"
+        ]
+
+        df_orders, error = cargar_datos_columnas_requeridas(uploaded_orders, columnas_requeridas, skiprows=4)
+
+        if error:
+            st.error(f"❌ Error en columnas: {error}")
+            return
+
+        df_orders = convertir_columnas_numericas(df_orders, ["Quantity", "Amount"])
+        df_orders = convertir_columnas_fecha(df_orders, ["Wanted On"])
+
+        # ==== FILTROS ====
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            plataformas = sorted(df_orders["Platform"].dropna().unique())
+            plataformas_seleccionadas = st.multiselect("🎯 Plataforma(s)", plataformas, default=plataformas)
+
+        # Actualizar ship_to dinámicamente según plataformas seleccionadas
+        df_temp = df_orders[df_orders["Platform"].isin(plataformas_seleccionadas)] if plataformas_seleccionadas else df_orders
+        destinos_disponibles = sorted(df_temp["Ship To"].dropna().unique())
+
+        with col2:
+            destinos_seleccionados = st.multiselect("🚚 Ship To", destinos_disponibles, default=destinos_disponibles)
+
+        with col3:
+            fechas_disponibles = df_temp["Wanted On"].dropna()
+
+            if not fechas_disponibles.empty:
+                min_date = fechas_disponibles.min().date()
+                max_date = fechas_disponibles.max().date()
+
+                fechas_seleccionadas = st.date_input(
+                    "📆 Rango de fechas (Wanted On)",
+                    value=(min_date, max_date),
+                    min_value=min_date,
+                    max_value=max_date
+                )
+
+                # 🔐 Forzamos validación
+                if isinstance(fechas_seleccionadas, tuple) and len(fechas_seleccionadas) == 2:
+                    fecha_inicio, fecha_fin = fechas_seleccionadas
+                else:
+                    st.warning("⚠️ Selecciona una fecha de inicio y una fecha final para mostrar los resultados.")
+                    return
+            else:
+                st.warning("⚠️ No hay fechas disponibles en los datos para aplicar filtro.")
+                return
+    
+        # ==== VALIDACIÓN DE FECHAS ====
+        if not fecha_inicio or not fecha_fin:
+            st.warning("⚠️ Por favor selecciona un rango de fechas válido para continuar.")
+            return
+
+        # ==== APLICAR FILTROS ====
+        df_filtrado = df_orders.copy()
+        if plataformas_seleccionadas:
+            df_filtrado = df_filtrado[df_filtrado["Platform"].isin(plataformas_seleccionadas)]
+        if destinos_seleccionados:
+            df_filtrado = df_filtrado[df_filtrado["Ship To"].isin(destinos_seleccionados)]
+
+        df_filtrado = df_filtrado[
+            (df_filtrado["Wanted On"] >= pd.to_datetime(fecha_inicio)) &
+            (df_filtrado["Wanted On"] <= pd.to_datetime(fecha_fin))
+        ]
+
+        if df_filtrado.empty:
+            st.warning("⚠️ No hay datos para los filtros seleccionados.")
+            return
+
+        # ==== RESUMEN POR PLATAFORMA ====
+        resumen = df_filtrado.groupby("Platform").agg(
+            Total_Piezas=("Quantity", "sum"),
+            Total_Monto=("Amount", "sum")
+        ).reset_index()
+
+        # Aplicar formatos
+        resumen["Total_Piezas"] = resumen["Total_Piezas"].map("{:,.0f}".format)
+        resumen["Total_Monto"] = resumen["Total_Monto"].map("${:,.2f}".format)
+
+        st.markdown("### 📊 Resumen por Plataforma")
+        st.dataframe(resumen)
+
+        # ==== GRÁFICAS ====
+        resumen_chart = df_filtrado.groupby("Platform").agg(
+            Total_Piezas=("Quantity", "sum"),
+            Total_Monto=("Amount", "sum")
+        ).reset_index()
+
+        col_pie1, col_pie2 = st.columns(2)
+        with col_pie1:
+            fig_piezas = px.pie(resumen_chart, values="Total_Piezas", names="Platform", title="Distribución de Piezas")
+            st.plotly_chart(fig_piezas, use_container_width=True)
+
+        with col_pie2:
+            fig_monto = px.pie(resumen_chart, values="Total_Monto", names="Platform", title="Distribución de Monto")
+            st.plotly_chart(fig_monto, use_container_width=True)
+
+        # ==== RESUMEN POR DESTINO ====
+        st.markdown("### 📦 Destino de Órdenes")
+        destino_resumen = df_filtrado.groupby("Ship To").agg(
+            Piezas=("Quantity", "sum"),
+            Monto=("Amount", "sum")
+        ).reset_index()
+
+        destino_resumen["Piezas"] = destino_resumen["Piezas"].map("{:,.0f}".format)
+        destino_resumen["Monto"] = destino_resumen["Monto"].map("${:,.2f}".format)
+
+        st.dataframe(destino_resumen)
+
+        # ==== EXPORTACIÓN ====
+        st.download_button(
+            label="⬇️ Descargar resumen en Excel",
+            data=exportar_excel(resumen_chart),
+            file_name="resumen_por_plataforma.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+def analizar_forecast_compras():
+    st.subheader("📦 Análisis de Forecast de Compras")
+
+    uploaded_file = st.file_uploader("📄 Cargar archivo de forecast de compras", type=["xlsx"], key="forecast_compras")
+
+    if uploaded_file:
+        columnas_requeridas = ["Item", "Type", "Wanted On", "Quantity", "Datos", "Vendor", "PO", "Unit Price (MXN)", "Total"]
+        df, error = cargar_datos_columnas_requeridas(uploaded_file, columnas_requeridas)
+
+        if error:
+            st.error(f"❌ Error en archivo: {error}")
+            return
+
+        # Procesar columnas
+        df = convertir_columnas_fecha(df, ["Wanted On"])
+        df = convertir_columnas_numericas(df, ["Quantity", "Unit Price (MXN)", "Total"])
+
+        # ==== FILTROS DINÁMICOS EN LA SIDEBAR ====
+        with st.sidebar:
+            st.markdown("### 🎯 Filtros de Forecast de Compras")
+
+            # ==== FILTRO 1: Type ====
+            types_disponibles = sorted(df["Type"].dropna().unique())
+            type_seleccionado = st.multiselect("🏷️ Tipo(s)", types_disponibles, default=types_disponibles)
+
+            df_temp = df[df["Type"].isin(type_seleccionado)] if type_seleccionado else df.copy()
+
+            # ==== FILTRO 2: Vendor ====
+            vendors_disponibles = sorted(df_temp["Vendor"].dropna().unique())
+            proveedores_seleccionados = st.multiselect("🏢 Proveedor(es)", vendors_disponibles, default=vendors_disponibles)
+
+            df_temp = df_temp[df_temp["Vendor"].isin(proveedores_seleccionados)] if proveedores_seleccionados else df_temp
+
+            # ==== FILTRO 3: PO ====
+            pos_disponibles = sorted(df_temp["PO"].dropna().unique())
+            pos_seleccionadas = st.multiselect("📄 Orden(es) de Compra (PO)", pos_disponibles, default=pos_disponibles)
+
+            df_temp = df_temp[df_temp["PO"].isin(pos_seleccionadas)] if pos_seleccionadas else df_temp
+
+            # ==== FILTRO 4: Fecha ====
+            fechas_disponibles = df_temp["Wanted On"].dropna()
+            if not fechas_disponibles.empty:
+                min_date = fechas_disponibles.min().date()
+                max_date = fechas_disponibles.max().date()
+
+                fechas_seleccionadas = st.date_input(
+                    "📆 Rango de fechas (Wanted On)",
+                    value=(min_date, max_date),
+                    min_value=min_date,
+                    max_value=max_date
+                )
+
+                if isinstance(fechas_seleccionadas, (tuple, list)) and len(fechas_seleccionadas) == 2:
+                    fecha_inicio, fecha_fin = fechas_seleccionadas
+                    df_filtrado = df_temp[
+                        (df_temp["Wanted On"] >= pd.to_datetime(fecha_inicio)) &
+                        (df_temp["Wanted On"] <= pd.to_datetime(fecha_fin))
+                    ]
+                else:
+                    st.warning("⚠️ Selecciona una fecha de inicio y una final.")
+                    st.stop()
+            else:
+                st.warning("⚠️ No hay fechas disponibles.")
+                st.stop()
+
+        # ==== APLICAR FILTROS ====
+        df_filtrado = df[
+            (df["Wanted On"] >= pd.to_datetime(fecha_inicio)) &
+            (df["Wanted On"] <= pd.to_datetime(fecha_fin)) &
+            (df["Vendor"].isin(proveedores_seleccionados)) &
+            (df["PO"].isin(pos_seleccionadas))
+        ]
+
+        if type_seleccionado != "Todos":
+            df_filtrado = df_filtrado[df_filtrado["Type"].isin(type_seleccionado)]
+
+        if df_filtrado.empty:
+            st.warning("⚠️ No hay datos para los filtros seleccionados.")
+            return
+
+        # ==== RESÚMENES ====
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("🧾 Total de Compras", f"${df_filtrado['Total'].sum():,.2f}")
+        with col2:
+            st.metric("📦 Total de Piezas", f"{df_filtrado['Quantity'].sum():,.0f}")
+
+        st.markdown("### 📊 Compras por Proveedor")
+        resumen_vendor = df_filtrado.groupby("Vendor").agg(
+            Total_Compra=("Total", "sum"),
+            Piezas=("Quantity", "sum")
+        ).reset_index()
+
+        resumen_vendor["Total_Compra"] = resumen_vendor["Total_Compra"].map("${:,.2f}".format)
+        resumen_vendor["Piezas"] = resumen_vendor["Piezas"].map("{:,.0f}".format)
+
+        st.dataframe(resumen_vendor)
+
+        # ==== GRÁFICAS ====
+        df_viz = df_filtrado.copy()
+        df_viz["Wanted On"] = df_viz["Wanted On"].dt.date
+
+        colg1, colg2 = st.columns(2)
+        with colg1:
+            fig_vendor = px.bar(
+                df_viz.groupby("Vendor").agg(Total=("Total", "sum"), Piezas=("Quantity", "sum")).reset_index(),
+                x="Vendor", y="Total", text="Piezas",
+                title="Total por Proveedor",
+                labels={"Total": "Monto ($)", "Piezas": "Piezas"}
+            )
+            fig_vendor.update_traces(textposition="outside")
+            fig_vendor.update_layout(xaxis_tickangle=-45, yaxis_tickformat="$,.0f")
+            st.plotly_chart(fig_vendor, use_container_width=True)
+
+        with colg2:
+            # Agrupar y asegurar formato correcto de fechas
+            resumen_fecha = df_viz.groupby("Wanted On").agg(Total=("Total", "sum"), Piezas=("Quantity", "sum")).reset_index()
+            resumen_fecha["Wanted On"] = pd.to_datetime(resumen_fecha["Wanted On"]).dt.date
+            resumen_fecha = resumen_fecha.sort_values("Wanted On")  # asegurar orden
+
+            fig_fecha = px.bar(
+                resumen_fecha,
+                x="Wanted On",
+                y="Total",
+                text="Piezas",
+                title="Compras por Fecha",
+                labels={"Wanted On": "Fecha", "Total": "Monto ($)", "Piezas": "Piezas"}
+            )
+
+            fig_fecha.update_traces(texttemplate="%{text:.0f} piezas", textposition="outside")
+            fig_fecha.update_layout(
+                xaxis=dict(type="category", tickangle=-45),
+                yaxis_tickformat="$,.0f",
+                hovermode="x unified"
+            )
+            st.plotly_chart(fig_fecha, use_container_width=True)
+            
+        # ==== DESCARGA ====
+        st.markdown("### 📤 Descargar Análisis")
+        st.download_button(
+            label="⬇️ Descargar en Excel",
+            data=exportar_excel(df_filtrado),
+            file_name="analisis_forecast_compras.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+
+        # =========================
+        # 📊 TABLA TIPO CALENDARIO
+        # =========================
+        st.markdown("## 📅 Cantidades por Tipo, Mes y Año")
+
+        # Preparar datos
+        df_calendario = df_filtrado.copy()
+        df_calendario["Mes"] = df_calendario["Wanted On"].dt.month_name(locale="es_MX")  # mes como nombre
+        df_calendario["Mes_Num"] = df_calendario["Wanted On"].dt.month
+        df_calendario["Año"] = df_calendario["Wanted On"].dt.year
+
+        # Ordenar meses correctamente
+        orden_meses = [
+            "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+            "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+        ]
+        df_calendario["Mes"] = pd.Categorical(df_calendario["Mes"], categories=orden_meses, ordered=True)
+
+        # Filtro de años
+        años_disponibles = sorted(df_calendario["Año"].dropna().unique())
+        años_seleccionados = st.multiselect("📆 Selecciona año(s) a mostrar:", años_disponibles, default=años_disponibles)
+        df_calendario = df_calendario[df_calendario["Año"].isin(años_seleccionados)]
+
+        # Filtro de tipos
+        tipos_disponibles = sorted(df_calendario["Type"].dropna().unique())
+        tipos_seleccionados = st.multiselect("🏷️ Selecciona Tipo(s):", tipos_disponibles, default=tipos_disponibles)
+        df_calendario = df_calendario[df_calendario["Type"].isin(tipos_seleccionados)]
+
+        if df_calendario.empty:
+            st.warning("⚠️ No hay datos para los filtros seleccionados.")
+            return
+
+        # Agrupar y pivotear
+        tabla_pivot = df_calendario.groupby(["Type", "Año", "Mes"]).agg({"Quantity": "sum"}).reset_index()
+        tabla_pivot = tabla_pivot.pivot_table(index="Type", columns=["Año", "Mes"], values="Quantity", fill_value=0)
+
+        # Ordenar columnas
+        tabla_pivot = tabla_pivot.sort_index(axis=1, level=[0, 1])
+
+        # Calcular fila Total
+        fila_total = tabla_pivot.sum(axis=0).to_frame().T
+        fila_total.index = ["TOTAL"]
+
+        # Combinar tabla con fila total
+        tabla_final = pd.concat([tabla_pivot, fila_total])
+
+        # Mostrar tabla
+        st.dataframe(tabla_final.style.format("${:,.2f}"), use_container_width=True)
+   
+        # Descargar
+        st.download_button(
+            label="⬇️ Descargar tabla por mes en Excel",
+            data=exportar_excel(tabla_final.reset_index()),
+            file_name="resumen_tipo_mes.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    else:
+        st.info("📥 Por favor, carga un archivo Excel para comenzar el análisis.")
+
+        

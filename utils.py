@@ -346,13 +346,18 @@ def cargar_archivos_estilo_escalera(archivos):
 
 def exportar_excel(df):
     """
-    Genera archivo Excel descargable en memoria
+    Genera archivo Excel descargable en memoria.
+    Si las columnas son MultiIndex, escribe también el índice para evitar error.
     """
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name="Escalera")
+        if isinstance(df.columns, pd.MultiIndex):
+            df.to_excel(writer, index=True, sheet_name="Resumen")
+        else:
+            df.to_excel(writer, index=False, sheet_name="Resumen")
     output.seek(0)
     return output
+
 
 
 def graficar_evolucion_item(df, item):
