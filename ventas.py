@@ -117,8 +117,7 @@ def comparativa_grafica():
 
         # Reindexar para incluir todos los meses, rellenando con 0 donde no hay datos
         resumen_mes = resumen_mes.set_index("Mes").reindex(rango_completo, fill_value=0).rename_axis("Mes").reset_index()
-        locale.setlocale(locale.LC_TIME, "en_US.UTF-8")  # o "es_MX.UTF-8" si prefieres español
-
+        
         resumen_mes["Mes_str"] = resumen_mes["Mes"].dt.strftime("%b-%Y")
         fig_mes = px.line(resumen_mes, x="Mes_str", y="Monto", markers=True,
                   title="Tendencia de Ventas por Mes",
