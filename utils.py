@@ -399,3 +399,32 @@ def graficar_evolucion_item(df, item):
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+def procesar_montos_escalera(df):
+    """
+    Procesa columnas de montos (AF a AQ) en formato datetime con sufijo ".1".
+    Devuelve un DataFrame en formato largo con columnas: Item, LMX, Cliente, Unit Price, Mes, Monto.
+    """
+    columnas_fijas = ["Item", "LMX", "Cliente", "Unit Price"]
+
+    # Detectar columnas de montos (fechas con sufijo ".1")
+    columnas_montos = [
+        col for col in df.columns
+        if (isinstance(col, pd.Timestamp) or isinstance(col, str))
+        and ".1" in str(col)
+        and "-" in str(col)
+    ]
+
+    # Formato largo
+    df_montos = df.melt(
+        id_vars=columnas_fijas,
+        value_vars=columnas_montos,
+        var_name="Mes",
+        value_name="Monto"
+    )
+
+    # Limpiar el nombre de la columna y convertir a datetime
+    df_montos["Mes"] = pd.to_datetime(df_montos["Mes"].apply(lambda x: str(x).replace(".1", "")), errors="coerce")
+    df_montos.dropna(subset=["Mes", "Monto"], inplace=True)
+
+    return df_montos

@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from utils import cargar_datos_columnas_requeridas, convertir_columnas_fecha, convertir_columnas_numericas, filter_by_columns, exportar_excel
+import locale
+from utils import cargar_datos_columnas_requeridas, convertir_columnas_fecha, convertir_columnas_numericas, filter_by_columns, exportar_excel, procesar_montos_escalera
 
 
 def ventas_app():
@@ -29,6 +30,23 @@ def importar_ventas():
 
     uploaded_orders = st.file_uploader("📄 Archivo de Orders", type=["xlsx"], key="orders")
     uploaded_sales = st.file_uploader("📄 Archivo de Ventas", type=["xlsx"], key="sales")
+
+
+    uploaded_escalera = st.file_uploader("📄 Archivo Escalera de Ventas (con fechas)", type=["xlsx"], key="escalera")
+
+    if uploaded_escalera:
+        try:
+            df_escalera_raw = pd.read_excel(uploaded_escalera)
+            df_montos_escalera = procesar_montos_escalera(df_escalera_raw)
+
+            st.session_state["df_escalera"] = df_montos_escalera
+            st.success("✅ Archivo escalera procesado correctamente")
+
+            if st.checkbox("🔍 Mostrar datos procesados de escalera"):
+                st.dataframe(df_montos_escalera.head())
+
+        except Exception as e:
+            st.error(f"❌ Error procesando archivo escalera: {e}")
 
     if uploaded_orders and uploaded_sales:
         df_orders, error_orders = cargar_datos_columnas_requeridas(uploaded_orders, columnas_orders, skiprows=4)
@@ -58,14 +76,65 @@ def comparativa_grafica():
 
     st.title("📊 Comparativa Pronóstico vs Ventas")
 
-    # 📌 Validar que se hayan cargado previamente los archivos
-    if "df_orders" not in st.session_state or "df_sales" not in st.session_state:
-        st.warning("⚠️ Primero carga ambos archivos en la pestaña 'Importar Reportes'.")
-        st.stop()
-
     # 📌 Obtener los dataframes de sesión
-    df_orders = st.session_state.df_orders.copy()
-    df_sales = st.session_state.df_sales.copy()
+    df_orders = st.session_state.get("df_orders", pd.DataFrame())
+    df_sales = st.session_state.get("df_sales", pd.DataFrame())
+    df_escalera = st.session_state.get("df_escalera", None)
+
+    if df_escalera is not None and (
+        "df_orders" not in st.session_state or st.session_state["df_orders"].empty
+    ) and (
+        "df_sales" not in st.session_state or st.session_state["df_sales"].empty
+    ):
+        clientes_disponibles = sorted(df_escalera["Cliente"].dropna().unique())
+        clientes_filtrados = st.multiselect(
+            "🔎 Filtrar por Cliente (opcional)",
+            options=clientes_disponibles,
+            default=clientes_disponibles
+        )
+
+        # Aplicar filtro
+        df_escalera = df_escalera[df_escalera["Cliente"].isin(clientes_filtrados)]
+
+        # 📊 Gráfico por Cliente
+        resumen_cliente = df_escalera.groupby("Cliente")["Monto"].sum().reset_index()
+        fig_cliente = px.bar(resumen_cliente, x="Cliente", y="Monto", text="Monto",
+                            title="Ventas Totales por Cliente")
+        fig_cliente.update_traces(texttemplate="%{text:$,.0f}", textposition="outside")
+        fig_cliente.update_layout(yaxis_tickformat="$,.0f")
+        st.plotly_chart(fig_cliente, use_container_width=True)
+
+        # 📈 Gráfico por Mes
+        
+        # Crear rango completo de meses desde el mínimo al máximo
+        fecha_inicio = df_escalera["Mes"].min().replace(day=1)
+        fecha_fin = df_escalera["Mes"].max().replace(day=1)
+
+        rango_completo = pd.date_range(start=fecha_inicio, end=fecha_fin, freq='MS')
+
+        # Agrupar ventas por mes
+        resumen_mes = df_escalera.groupby("Mes")["Monto"].sum().reset_index()
+
+        # Reindexar para incluir todos los meses, rellenando con 0 donde no hay datos
+        resumen_mes = resumen_mes.set_index("Mes").reindex(rango_completo, fill_value=0).rename_axis("Mes").reset_index()
+        locale.setlocale(locale.LC_TIME, "en_US.UTF-8")  # o "es_MX.UTF-8" si prefieres español
+
+        resumen_mes["Mes_str"] = resumen_mes["Mes"].dt.strftime("%b-%Y")
+        fig_mes = px.line(resumen_mes, x="Mes_str", y="Monto", markers=True,
+                  title="Tendencia de Ventas por Mes",
+                  labels={"Monto": "Monto ($)", "Mes_str": "Mes"})
+        fig_mes.update_traces(mode="lines+markers", line=dict(width=3), marker=dict(size=6))
+        fig_mes.update_layout(yaxis_tickformat="$,.0f", hovermode="x unified")
+        st.plotly_chart(fig_mes, use_container_width=True)
+
+        if df_escalera.empty:
+            st.warning("⚠️ No hay datos para los clientes seleccionados.")
+            st.stop()
+
+    # 📌 Validar si NO hay orders ni sales ni escalera
+    if df_orders.empty and df_sales.empty and df_escalera is None:
+        st.warning("⚠️ No hay datos cargados. Ve a 'Importar Reportes' para cargar al menos un archivo.")
+    st.stop()
 
     # 📌 Procesamiento de columnas
     df_orders = convertir_columnas_fecha(df_orders, ["Ship On"])
@@ -403,6 +472,7 @@ def comparativa_grafica():
             st.dataframe(resumen_melt)
     else:
         st.info("Selecciona un cliente en el filtro lateral para ver más detalles.")
+
 
 def analizar_ordenes_por_plataforma():
     st.subheader("📦 Análisis de Órdenes por Plataforma")
