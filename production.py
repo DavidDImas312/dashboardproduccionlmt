@@ -1,4 +1,3 @@
-# produccion.py
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -11,132 +10,1257 @@ from utils import (
     cargar_downtime,
     extraer_downtime,
     catalogo_downtime,
-    filtrar_downtime
+    filtrar_downtime,
 )
 
-def produccion_app():
+# ============================================================
+# SESSION STATE
+# ============================================================
 
-    menuproduction = ["Importar Reportes", "Dashboard"]
-    option = st.sidebar.selectbox("Acciones:", menuproduction)
+def inicializar_session_state():
+    """Inicializa explícitamente todos los DataFrames usados por la aplicación."""
+    estados_iniciales = {
+        "df_clean": None,
+        "df_plan": None,
+        "df_downtime": None,
+        "df_downtime_procesado": None,
+    }
+
+    for key, value in estados_iniciales.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
+
+def produccion_app():
+    inicializar_session_state()
+
+    menu_produccion = ["Importar Reportes", "Dashboard"]
+    option = st.sidebar.selectbox("Acciones:", menu_produccion)
 
     if option == "Importar Reportes":
         importar_reportes()
-
     elif option == "Dashboard":
         dashboard()
 
+
+# ============================================================
+# IMPORTACIÓN DE REPORTES
+# ============================================================
+
 def importar_reportes():
-    st.header("📥 Importar Reporte Production Timecard")
-    uploaded_file = st.file_uploader("Selecciona el archivo Excel del reporte", type=["xlsx"])
+    st.header("📥 Importar Reportes")
+
+    # --------------------------------------------------------
+    # Production Timecard
+    # --------------------------------------------------------
+    st.subheader("Production Timecard")
+    uploaded_file = st.file_uploader(
+        "Selecciona el archivo Excel del reporte",
+        type=["xlsx"],
+        key="production_file",
+    )
 
     if uploaded_file is not None:
-        df, error = cargar_datos_columnas_requeridas(uploaded_file, required_columns, skiprows=4)
+        df, error = cargar_datos_columnas_requeridas(
+            uploaded_file,
+            required_columns,
+            skiprows=4,
+        )
+
         if df is None:
             st.error(f"❌ {error}")
-            st.stop()
+        else:
+            st.session_state.df_clean = df
+            st.success("✅ Archivo de Production Timecard cargado.")
 
-        st.session_state.df_clean = df
-        st.success("✅ Archivo cargado.")
-        if st.checkbox("Mostrar datos cargados"):
-            st.dataframe(df)
+            if st.checkbox("Mostrar datos cargados", key="show_production_data"):
+                st.dataframe(df, use_container_width=True)
 
-    st.header("📥 Importar Reporte Scheduled Jobs")
-    uploaded_plan = st.file_uploader("Selecciona el archivo Excel de la programación", type=["xlsx"], key="plan")
+    # --------------------------------------------------------
+    # Scheduled Jobs
+    # --------------------------------------------------------
+    st.subheader("Scheduled Jobs")
+    uploaded_plan = st.file_uploader(
+        "Selecciona el archivo Excel de la programación",
+        type=["xlsx"],
+        key="plan",
+    )
+
     if uploaded_plan is not None:
-        df_plan, error = cargar_datos_columnas_requeridas(uploaded_plan, required_columns_plan, skiprows=5)
+        df_plan, error = cargar_datos_columnas_requeridas(
+            uploaded_plan,
+            required_columns_plan,
+            skiprows=5,
+        )
+
         if df_plan is None:
             st.error(f"❌ {error}")
-            st.stop()
-        st.session_state.df_plan = df_plan
-        st.success("✅ Archivo de programación cargado.")
-        if st.checkbox("Mostrar datos de programación"):
-            st.dataframe(df_plan)
+        else:
+            st.session_state.df_plan = df_plan
+            st.success("✅ Archivo de programación cargado.")
 
-    st.header("📥 Importar Reporte Downtime por W/C")
-    uploaded_downtime = st.file_uploader("Selecciona el archivo Excel de Downtime", type=["xlsx"], key="downtime")
+            if st.checkbox("Mostrar datos de programación", key="show_plan_data"):
+                st.dataframe(df_plan, use_container_width=True)
+
+    # --------------------------------------------------------
+    # Downtime
+    # --------------------------------------------------------
+    st.subheader("Downtime por W/C")
+    uploaded_downtime = st.file_uploader(
+        "Selecciona el archivo Excel de Downtime",
+        type=["xlsx"],
+        key="downtime",
+    )
+
     if uploaded_downtime is not None:
         df_downtime = cargar_downtime(uploaded_downtime)
+
         if df_downtime is None:
             st.error("❌ No se pudo leer el archivo de Downtime.")
-            st.stop()
+        else:
+            st.session_state.df_downtime = df_downtime
+            df_downtime_procesado = extraer_downtime(df_downtime)
+            st.session_state.df_downtime_procesado = df_downtime_procesado
 
-        st.session_state.df_downtime = df_downtime
-        df_downtime_procesado = extraer_downtime(df_downtime)
-        st.session_state.df_downtime_procesado = df_downtime_procesado
+            st.success("✅ Archivo de Downtime cargado y procesado.")
 
-        st.success("✅ Archivo de Downtime cargado.")
-        if st.checkbox("Mostrar Downtime procesado"):
-            st.dataframe(df_downtime_procesado)
+            if st.checkbox("Mostrar Downtime procesado", key="show_downtime_data"):
+                st.dataframe(df_downtime_procesado, use_container_width=True)
 
-def dashboard():
-    if st.session_state.df_clean is None:
-        st.warning("Primero carga loa reportes.")
-        return
 
-    df = st.session_state.df_clean
+# ============================================================
+# FILTROS GLOBALES
+# ============================================================
 
-    # Filtros por Fecha
-    fechas = st.sidebar.date_input(
+def obtener_filtros_globales(df):
+    """
+    Muestra y aplica los filtros globales del dashboard.
+
+    Jerarquía:
+        Fecha
+          ↓
+        Turno
+          ↓
+        W/C Type
+          ↓
+        W/C
+
+    Los filtros dependientes se sincronizan para evitar
+    conservar selecciones que ya no pertenecen al filtro padre.
+    """
+
+    df = df.copy()
+
+    # ============================================================
+    # LIMPIEZA BÁSICA
+    # ============================================================
+
+    df["Completed On"] = pd.to_datetime(
+        df["Completed On"],
+        errors="coerce"
+    )
+
+    # Limpiar columnas utilizadas en filtros
+    for col in ["Shift", "W/C Type", "W/C"]:
+        if col in df.columns:
+            df[col] = (
+                df[col]
+                .astype("string")
+                .str.strip()
+            )
+
+    # ============================================================
+    # FILTRO DE FECHAS
+    # ============================================================
+
+    fecha_min = df["Completed On"].min().date()
+    fecha_max = df["Completed On"].max().date()
+
+    fechas_globales = st.sidebar.date_input(
         "Selecciona rango de fechas",
-        [df["Completed On"].min(), df["Completed On"].max()]
+        [fecha_min, fecha_max],
+        key="filter_dates_global",
+    )
+
+    # Protección si Streamlit devuelve una sola fecha
+    if not isinstance(fechas_globales, (list, tuple)):
+        fechas_globales = [
+            fechas_globales,
+            fechas_globales
+        ]
+
+    if len(fechas_globales) == 1:
+        fechas_globales = [
+            fechas_globales[0],
+            fechas_globales[0]
+        ]
+
+    fecha_inicio = pd.to_datetime(fechas_globales[0])
+
+    fecha_fin = (
+        pd.to_datetime(fechas_globales[1])
+        + pd.Timedelta(days=1)
+        - pd.Timedelta(seconds=1)
     )
 
     df_filtrado = df[
-        (df["Completed On"] >= pd.to_datetime(fechas[0])) &
-        (df["Completed On"] <= pd.to_datetime(fechas[1]))
-        ]
+        (df["Completed On"] >= fecha_inicio)
+        & (df["Completed On"] <= fecha_fin)
+    ].copy()
 
-    # Filtro por turno (global para todas las gráficas)
-    turnos_disponibles = df_filtrado["Shift"].unique()
-    turnos_seleccionados = st.sidebar.multiselect(
-        "Selecciona Turno(s)",
+    # ============================================================
+    # FILTRO DE TURNOS
+    # ============================================================
+
+    turnos_disponibles = sorted(
+        df_filtrado["Shift"]
+        .dropna()
+        .unique()
+        .tolist(),
+        key=str
+    )
+
+    # Recuperar selección anterior
+    turnos_previos = st.session_state.get(
+        "filter_shifts_global",
+        turnos_disponibles
+    )
+
+    # Mantener solamente valores que siguen existiendo
+    turnos_validos = [
+        turno
+        for turno in turnos_previos
+        if turno in turnos_disponibles
+    ]
+
+    # Si no queda ninguno, seleccionar todos
+    if not turnos_validos and turnos_disponibles:
+        turnos_validos = turnos_disponibles
+
+    selected_shifts_global = st.sidebar.multiselect(
+        "Turno(s)",
         options=turnos_disponibles,
-        default=turnos_disponibles
+        default=turnos_validos,
+        key="filter_shifts_global",
     )
 
-    # Aplicar filtro de turnos
-    df_filtrado = df_filtrado[df_filtrado["Shift"].isin(turnos_seleccionados)]
+    df_filtrado = df_filtrado[
+        df_filtrado["Shift"].isin(selected_shifts_global)
+    ].copy()
 
-    # Filtro por W/C Type
-    wc_types_disponibles = df_filtrado["W/C Type"].unique()
-    wc_types_seleccionados = st.sidebar.multiselect(
-        "Selecciona Tipo(s) de Centro de Trabajo",
+    # ============================================================
+    # FILTRO W/C TYPE
+    # ============================================================
+
+    wc_types_disponibles = sorted(
+        df_filtrado["W/C Type"]
+        .dropna()
+        .unique()
+        .tolist(),
+        key=str
+    )
+
+    wc_types_previos = st.session_state.get(
+        "filter_wc_types_global",
+        wc_types_disponibles
+    )
+
+    wc_types_validos = [
+        wc_type
+        for wc_type in wc_types_previos
+        if wc_type in wc_types_disponibles
+    ]
+
+    if not wc_types_validos and wc_types_disponibles:
+        wc_types_validos = wc_types_disponibles
+
+    selected_wc_types_global = st.sidebar.multiselect(
+        "Tipo(s) de Centro de Trabajo",
         options=wc_types_disponibles,
-        default=wc_types_disponibles
+        default=wc_types_validos,
+        key="filter_wc_types_global",
     )
 
-    df_filtrado = df_filtrado[df_filtrado["W/C Type"].isin(wc_types_seleccionados)]
-    # Filtrar Timecards únicos antes de agrupar
-    df_filtrado_unique = df_filtrado.drop_duplicates(subset=["Timesheet #"])
+    df_filtrado = df_filtrado[
+        df_filtrado["W/C Type"].isin(
+            selected_wc_types_global
+        )
+    ].copy()
 
-    # KPIs resumen
-    st.subheader("🔍 Resumen General")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Eficiencia Promedio", f'{df_filtrado["Efficiency"].mean():.2f}%')
-    col2.metric("OEE Promedio", f'{df_filtrado["OEE"].mean():.2f}%')
-    col3.metric("Cantidad Producida", f'{df_filtrado_unique["Quantity"].sum():,.0f}')
-    col4.metric("Horas No-Producción", f'{df_filtrado_unique["Non-production Downtime Hours"].sum():,.2f}')
+    # ============================================================
+    # FILTRO W/C
+    # ============================================================
 
-    # Obtener lista única de W/C disponibles
-    wc_options = df_filtrado["W/C"].unique().tolist()
-    wc_options = sorted(df_filtrado["W/C"].unique().tolist())
+    wc_options = sorted(
+        df_filtrado["W/C"]
+        .dropna()
+        .unique()
+        .tolist(),
+        key=str
+    )
 
-    # Filtro multiselección
-    selected_wc = st.multiselect(
-        "Selecciona Centro(s) de Trabajo:",
+    # ------------------------------------------------------------
+    # IMPORTANTE:
+    # Sincronizar W/C con el W/C Type seleccionado
+    # ------------------------------------------------------------
+
+    wcs_previos = st.session_state.get(
+        "filter_wcs_global",
+        wc_options
+    )
+
+    wcs_validos = [
+        wc
+        for wc in wcs_previos
+        if wc in wc_options
+    ]
+
+    # Si cambió W/C Type y los W/C anteriores ya no existen,
+    # seleccionar automáticamente todos los W/C disponibles.
+    if not wcs_validos and wc_options:
+        wcs_validos = wc_options
+
+    selected_wcs_global = st.sidebar.multiselect(
+        "Centro(s) de Trabajo",
         options=wc_options,
-        default=wc_options  # por defecto selecciona todos
+        default=wcs_validos,
+        key="filter_wcs_global",
     )
 
-    # Filtrar según selección
-    df_wc = df_filtrado[df_filtrado["W/C"].isin(selected_wc)]
+    df_wc = df_filtrado[
+        df_filtrado["W/C"].isin(
+            selected_wcs_global
+        )
+    ].copy()
 
-    # Sección: Top 5 Centros de Trabajo Críticos
+    # ============================================================
+    # DEBUG TEMPORAL
+    # ============================================================
+
+    # Puedes quitar esta sección después de validar el comportamiento.
+
+    # st.sidebar.write("DEBUG")
+    # st.sidebar.write("W/C Type:", selected_wc_types_global)
+    # st.sidebar.write("W/C disponibles:", wc_options)
+    # st.sidebar.write("W/C seleccionados:", selected_wcs_global)
+    # st.sidebar.write("Registros:", len(df_wc))
+
+    return (
+        df_filtrado,
+        df_wc,
+        fechas_globales,
+        selected_shifts_global,
+        selected_wc_types_global,
+        selected_wcs_global,
+    )
+
+
+# ============================================================
+# PREPARACIÓN DE DOWNTIME
+# ============================================================
+
+def preparar_downtime(
+    fechas_globales,
+    selected_shifts_global,
+    selected_wc_types_global,
+    selected_wcs_global,
+):
+    """Filtra Downtime y agrega Description y Área responsable desde el catálogo."""
+
+    df_downtime = st.session_state.df_downtime_procesado
+
+    if df_downtime is None:
+        return None
+
+    df_downtime_filtrado = filtrar_downtime(
+        df_downtime.copy(),
+        fechas=fechas_globales,
+        turnos=selected_shifts_global,
+        wc_types=selected_wc_types_global,
+        wcs=selected_wcs_global,
+    )
+
+    if df_downtime_filtrado is None:
+        return None
+
+    if df_downtime_filtrado.empty:
+        return df_downtime_filtrado
+
+    # Asegurar que Reason ID sea texto para que D63.5 / D69.5
+    # se mantengan correctamente.
+    df_downtime_filtrado["Razones"] = (
+        df_downtime_filtrado["Razones"]
+        .astype("string")
+        .str.strip()
+    )
+
+    catalogo = catalogo_downtime.copy()
+    catalogo["Reason ID"] = (
+        catalogo["Reason ID"]
+        .astype("string")
+        .str.strip()
+    )
+
+    columnas_catalogo = ["Reason ID", "Description"]
+
+    # Área responsable es opcional para mantener compatibilidad
+    # mientras se actualiza utils.py.
+    if "Área responsable" in catalogo.columns:
+        columnas_catalogo.append("Área responsable")
+    else:
+        st.warning(
+            "⚠️ El catálogo de Downtime todavía no contiene la columna "
+            "'Área responsable'. Actualiza catalogo_downtime en utils.py."
+        )
+
+    # Evitar duplicación accidental si el catálogo tiene Reason ID repetido.
+    catalogo = catalogo[columnas_catalogo].drop_duplicates(
+        subset=["Reason ID"],
+        keep="first",
+    )
+
+    df_downtime_filtrado = df_downtime_filtrado.merge(
+        catalogo,
+        left_on="Razones",
+        right_on="Reason ID",
+        how="left",
+        validate="many_to_one",
+    )
+
+    return df_downtime_filtrado
+
+
+# ============================================================
+# KPI GENERALES
+# ============================================================
+
+def mostrar_kpis(df_filtrado):
+    st.subheader("Resumen General")
+
+    if df_filtrado.empty:
+        st.info("No hay datos para los filtros seleccionados.")
+        return
+
+    df_unique_timesheet = df_filtrado.drop_duplicates(
+        subset=["Timesheet #"]
+    )
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric(
+        "Eficiencia Promedio",
+        f"{df_filtrado['Efficiency'].mean():.2f}%",
+    )
+
+    col2.metric(
+        "OEE Promedio",
+        f"{df_filtrado['OEE'].mean():.2f}%",
+    )
+
+    col3.metric(
+        "Cantidad Producida",
+        f"{df_unique_timesheet['Quantity'].sum():,.0f}",
+    )
+
+    col4.metric(
+        "Horas No-Producción",
+        f"{df_unique_timesheet['Non-production Downtime Hours'].sum():,.2f}",
+    )
+
+
+# ============================================================
+# HELPERS PARA GRÁFICAS
+# ============================================================
+
+def configurar_layout(fig, height=500, margin_bottom=50):
+    """Aplica el layout común a las gráficas Plotly."""
+    fig.update_layout(
+        height=height,
+        plot_bgcolor="rgba(0,0,0,0)",
+        title_font=dict(size=18, color="white", family="Arial"),
+        font=dict(size=12),
+        margin=dict(t=50, l=50, r=30, b=margin_bottom),
+    )
+    return fig
+
+
+def configurar_ejes(fig, x_grid=True, y_grid=False, x_title=None, y_title=None):
+    fig.update_layout(
+        xaxis=dict(
+            showgrid=x_grid,
+            gridcolor="lightgrey",
+        ),
+        yaxis=dict(
+            showgrid=y_grid,
+        ),
+    )
+
+    if x_title is not None:
+        fig.update_layout(xaxis_title=x_title)
+    if y_title is not None:
+        fig.update_layout(yaxis_title=y_title)
+
+    return fig
+
+
+def agregar_texto_barra(fig, formato="%{text:.2f}", position="inside"):
+    fig.update_traces(
+        texttemplate=formato,
+        textposition=position,
+        insidetextanchor="middle",
+    )
+    return fig
+
+
+# ============================================================
+# GRÁFICAS DE PRODUCCIÓN
+# ============================================================
+
+def grafica_eficiencia_wc(df_wc):
+    efficiency_wc = (
+        df_wc.groupby("W/C")["Efficiency"]
+        .mean()
+        .reset_index()
+        .sort_values(by="Efficiency", ascending=True)
+    )
+
+    fig = px.bar(
+        efficiency_wc,
+        x="W/C",
+        y="Efficiency",
+        text="Efficiency",
+        color="Efficiency",
+        color_continuous_scale="RdYlGn",
+        title="Promedio de Eficiencia",
+        labels={
+            "W/C": "Centro de Trabajo (W/C)",
+            "Efficiency": "Eficiencia (%)",
+        },
+        height=500,
+    )
+
+    agregar_texto_barra(fig, "%{text:.1f}%")
+    configurar_layout(fig, margin_bottom=80)
+    configurar_ejes(
+        fig,
+        x_grid=False,
+        y_grid=True,
+        x_title="Centro de Trabajo (W/C)",
+        y_title="Eficiencia (%)",
+    )
+    fig.update_yaxes(range=[0, 100])
+    fig.update_xaxes(tickangle=35)
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def grafica_produccion_wc(df_wc):
+    df_unique = df_wc.drop_duplicates(subset=["Timesheet #"])
+
+    quantity_wc = (
+        df_unique.groupby("W/C")["Quantity"]
+        .sum()
+        .reset_index()
+        .sort_values(by="Quantity", ascending=True)
+    )
+
+    fig = px.bar(
+        quantity_wc,
+        x="Quantity",
+        y="W/C",
+        text="Quantity",
+        color="Quantity",
+        color_continuous_scale="RdYlGn",
+        title="Producción por W/C",
+        labels={
+            "Quantity": "Partes Producidas",
+            "W/C": "Centro de Trabajo (W/C)",
+        },
+        height=500,
+    )
+
+    agregar_texto_barra(fig, "%{text:,}")
+    configurar_layout(fig)
+    configurar_ejes(
+        fig,
+        x_grid=True,
+        y_grid=False,
+        x_title="Partes Producidas",
+        y_title="Centro de Trabajo (W/C)",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ============================================================
+# GRÁFICAS DE DOWNTIME
+# ============================================================
+
+def grafica_downtime_wc(df_downtime):
+    downtime_wc = (
+        df_downtime.groupby("W/C")["Horas Downtime"]
+        .sum()
+        .reset_index()
+        .sort_values(by="Horas Downtime", ascending=True)
+    )
+
+    if downtime_wc.empty:
+        st.info("No hay datos de Downtime para mostrar.")
+        return
+
+    fig = px.bar(
+        downtime_wc,
+        y="W/C",
+        x="Horas Downtime",
+        orientation="h",
+        text="Horas Downtime",
+        color="Horas Downtime",
+        color_continuous_scale="RdYlGn_r",
+        title="Downtime Total por W/C",
+        labels={
+            "W/C": "Centro de Trabajo (W/C)",
+            "Horas Downtime": "Downtime (hrs)",
+        },
+        height=600,
+    )
+
+    agregar_texto_barra(fig, "%{text:.2f}")
+    configurar_layout(fig, height=600)
+    configurar_ejes(
+        fig,
+        x_grid=True,
+        y_grid=False,
+        x_title="Downtime (hrs)",
+        y_title="Centro de Trabajo (W/C)",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def grafica_downtime_area(df_downtime):
+    if "Área responsable" not in df_downtime.columns:
+        st.warning("No existe 'Área responsable' en el catálogo de Downtime.")
+        return
+
+    downtime_area = (
+        df_downtime.groupby("Área responsable")["Horas Downtime"]
+        .sum()
+        .reset_index()
+        .sort_values(by="Horas Downtime", ascending=True)
+    )
+
+    if downtime_area.empty:
+        st.info("No hay datos de Downtime para mostrar.")
+        return
+
+    fig = px.bar(
+        downtime_area,
+        x="Horas Downtime",
+        y="Área responsable",
+        orientation="h",
+        text="Horas Downtime",
+        color="Horas Downtime",
+        color_continuous_scale="RdYlGn_r",
+        title="Downtime Total por Área Responsable",
+        labels={
+            "Horas Downtime": "Downtime (hrs)",
+            "Área responsable": "Área Responsable",
+        },
+        height=500,
+    )
+
+    agregar_texto_barra(fig, "%{text:.2f}")
+    configurar_layout(fig)
+    configurar_ejes(
+        fig,
+        x_grid=True,
+        y_grid=False,
+        x_title="Downtime (hrs)",
+        y_title="Área Responsable",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def grafica_top_razones_downtime(df_downtime):
+    if "Description" not in df_downtime.columns:
+        st.warning("No existe 'Description' en el catálogo de Downtime.")
+        return
+
+    top_razones = (
+        df_downtime.groupby("Description")["Horas Downtime"]
+        .sum()
+        .reset_index()
+        .sort_values(by="Horas Downtime", ascending=False)
+        .head(10)
+        .sort_values(by="Horas Downtime", ascending=True)
+    )
+
+    if top_razones.empty:
+        st.info("No hay razones de Downtime para mostrar.")
+        return
+
+    fig = px.bar(
+        top_razones,
+        x="Horas Downtime",
+        y="Description",
+        orientation="h",
+        text="Horas Downtime",
+        color="Horas Downtime",
+        color_continuous_scale="RdYlGn_r",
+        title="Top 10 Razones de Downtime",
+        labels={
+            "Horas Downtime": "Downtime (hrs)",
+            "Description": "Razón",
+        },
+        height=550,
+    )
+
+    agregar_texto_barra(fig, "%{text:.2f}")
+    configurar_layout(fig, height=550)
+    configurar_ejes(
+        fig,
+        x_grid=True,
+        y_grid=False,
+        x_title="Downtime (hrs)",
+        y_title="Razón",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def grafica_downtime_area_wc(df_downtime):
+    if "Área responsable" not in df_downtime.columns:
+        st.warning("No existe 'Área responsable' en el catálogo de Downtime.")
+        return
+
+    downtime_area_wc = (
+        df_downtime.groupby(
+            ["Área responsable", "W/C"]
+        )["Horas Downtime"]
+        .sum()
+        .reset_index()
+    )
+
+    if downtime_area_wc.empty:
+        st.info("No hay datos de Downtime para mostrar.")
+        return
+
+    fig = px.bar(
+        downtime_area_wc,
+        x="Horas Downtime",
+        y="W/C",
+        color="Área responsable",
+        orientation="h",
+        barmode="group",
+        title="Downtime por Área y Centro de Trabajo",
+        labels={
+            "Horas Downtime": "Downtime (hrs)",
+            "W/C": "Centro de Trabajo",
+            "Área responsable": "Área Responsable",
+        },
+        height=600,
+    )
+
+    configurar_layout(fig, height=600)
+    configurar_ejes(
+        fig,
+        x_grid=True,
+        y_grid=False,
+        x_title="Downtime (hrs)",
+        y_title="Centro de Trabajo (W/C)",
+    )
+    fig.update_layout(legend_title_text="Área Responsable")
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def mostrar_kpis_downtime(df_downtime):
+    total_downtime = df_downtime["Horas Downtime"].sum()
+    total_areas = (
+        df_downtime["Área responsable"].nunique()
+        if "Área responsable" in df_downtime.columns
+        else 0
+    )
+    total_razones = (
+        df_downtime["Description"].nunique()
+        if "Description" in df_downtime.columns
+        else df_downtime["Razones"].nunique()
+    )
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("Downtime Total", f"{total_downtime:,.2f} h")
+    col2.metric("Áreas Responsables", total_areas)
+    col3.metric("Razones Registradas", total_razones)
+
+
+def mostrar_seccion_downtime(df_downtime):
+    st.subheader("⏱️ Análisis de Downtime")
+
+    if df_downtime is None:
+        st.warning(
+            "Debes cargar y procesar el archivo de Downtime para mostrar esta sección."
+        )
+        return
+
+    if df_downtime.empty:
+        st.info("No hay datos de Downtime con los filtros seleccionados.")
+        return
+
+    mostrar_kpis_downtime(df_downtime)
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        grafica_downtime_wc(df_downtime)
+
+    with col_b:
+        grafica_downtime_area(df_downtime)
+
+    col_c, col_d = st.columns(2)
+
+    with col_c:
+        grafica_top_razones_downtime(df_downtime)
+
+    with col_d:
+        grafica_downtime_area_wc(df_downtime)
+
+
+# ============================================================
+# GRÁFICAS OPERATIVAS
+# ============================================================
+
+def grafica_eficiencia_empleado(df_wc):
+    eficiencia_empleado = (
+        df_wc.groupby("Employee")["Efficiency"]
+        .mean()
+        .reset_index()
+        .sort_values(by="Efficiency", ascending=False)
+    )
+
+    fig = px.bar(
+        eficiencia_empleado,
+        x="Efficiency",
+        y="Employee",
+        text=eficiencia_empleado["Efficiency"].round(1).astype(str) + "%",
+        color="Efficiency",
+        color_continuous_scale="RdYlGn",
+        title="Eficiencia Promedio por Empleado",
+        labels={
+            "Efficiency": "Eficiencia (%)",
+            "Employee": "Empleado",
+        },
+        height=600,
+    )
+
+    fig.update_traces(
+        textposition="inside",
+        insidetextanchor="middle",
+    )
+    configurar_layout(fig, height=600)
+    configurar_ejes(
+        fig,
+        x_grid=True,
+        y_grid=False,
+        x_title="Eficiencia (%)",
+        y_title="Empleado",
+    )
+    fig.update_xaxes(range=[0, 100])
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def grafica_oee_wc(df_wc):
+    oee_wc = (
+        df_wc.groupby("W/C")["OEE"]
+        .mean()
+        .reset_index()
+        .sort_values(by="OEE", ascending=False)
+    )
+
+    if oee_wc.empty:
+        st.info("No hay datos de OEE para mostrar.")
+        return
+
+    max_value = oee_wc["OEE"].max()
+    oee_wc["TextPosition"] = oee_wc["OEE"].apply(
+        lambda x: "inside" if x > max_value * 0.15 else "outside"
+    )
+
+    fig = px.bar(
+        oee_wc,
+        y="W/C",
+        x="OEE",
+        text=oee_wc["OEE"].apply(lambda x: f"{x:.2f}%"),
+        color="OEE",
+        color_continuous_scale="RdYlGn",
+        title="OEE Promedio por W/C",
+        labels={
+            "OEE": "OEE Promedio (%)",
+            "W/C": "Centro de Trabajo (W/C)",
+        },
+        height=500,
+    )
+
+    fig.update_traces(
+        textposition=oee_wc["TextPosition"],
+        insidetextanchor="middle",
+    )
+    configurar_layout(fig)
+    configurar_ejes(
+        fig,
+        x_grid=True,
+        y_grid=False,
+        x_title="OEE Promedio (%)",
+        y_title="Centro de Trabajo (W/C)",
+    )
+    fig.update_xaxes(range=[0, 100])
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def grafica_horas_wc(df_wc):
+    df_unique = df_wc.drop_duplicates(subset=["Timesheet #"])
+
+    horas_wc = (
+        df_unique.groupby("W/C")["Hours"]
+        .sum()
+        .reset_index()
+        .sort_values(by="Hours", ascending=False)
+    )
+
+    if horas_wc.empty:
+        st.info("No hay datos de horas para mostrar.")
+        return
+
+    max_value = horas_wc["Hours"].max()
+    horas_wc["TextPosition"] = horas_wc["Hours"].apply(
+        lambda x: "inside" if x > max_value * 0.15 else "outside"
+    )
+
+    fig = px.bar(
+        horas_wc,
+        y="W/C",
+        x="Hours",
+        text=horas_wc["Hours"].round(2).astype(str),
+        color="Hours",
+        color_continuous_scale="RdYlGn",
+        title="Total de Horas por W/C",
+        labels={
+            "Hours": "Total de Horas",
+            "W/C": "Centro de Trabajo (W/C)",
+        },
+        height=500,
+    )
+
+    fig.update_traces(
+        textposition=horas_wc["TextPosition"],
+        insidetextanchor="middle",
+    )
+    configurar_layout(fig)
+    configurar_ejes(
+        fig,
+        x_grid=True,
+        y_grid=False,
+        x_title="Total de Horas",
+        y_title="Centro de Trabajo (W/C)",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def grafica_nonproduction_wc(df_wc):
+    df_unique = df_wc.drop_duplicates(subset=["Timesheet #"])
+
+    non_prod_wc = (
+        df_unique.groupby("W/C")["Non-production Downtime Hours"]
+        .sum()
+        .reset_index()
+        .sort_values(by="Non-production Downtime Hours", ascending=False)
+    )
+
+    if non_prod_wc.empty:
+        st.info("No hay datos de horas no-producción para mostrar.")
+        return
+
+    max_value = non_prod_wc["Non-production Downtime Hours"].max()
+    non_prod_wc["TextPosition"] = non_prod_wc["Non-production Downtime Hours"].apply(
+        lambda x: "inside" if x > max_value * 0.15 else "outside"
+    )
+
+    fig = px.bar(
+        non_prod_wc,
+        y="W/C",
+        x="Non-production Downtime Hours",
+        text=non_prod_wc["Non-production Downtime Hours"].round(2).astype(str),
+        color="Non-production Downtime Hours",
+        color_continuous_scale="RdYlGn_r",
+        title="Total de Horas No-Producción por W/C",
+        labels={
+            "Non-production Downtime Hours": "Horas No-Producción",
+            "W/C": "Centro de Trabajo (W/C)",
+        },
+        height=500,
+    )
+
+    fig.update_traces(
+        textposition=non_prod_wc["TextPosition"],
+        insidetextanchor="middle",
+    )
+    configurar_layout(fig)
+    configurar_ejes(
+        fig,
+        x_grid=True,
+        y_grid=False,
+        x_title="Total de Horas No-Producción",
+        y_title="Centro de Trabajo (W/C)",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def grafica_scrap_wc(df_wc):
+    df_unique = df_wc.drop_duplicates(subset=["Timesheet #"])
+
+    scrap_wc = (
+        df_unique.groupby("W/C")["Scrap"]
+        .sum()
+        .reset_index()
+        .sort_values(by="Scrap", ascending=False)
+    )
+
+    if scrap_wc.empty:
+        st.info("No hay datos de Scrap para mostrar.")
+        return
+
+    max_value = scrap_wc["Scrap"].max()
+    scrap_wc["TextPosition"] = scrap_wc["Scrap"].apply(
+        lambda x: "inside" if x > max_value * 0.15 else "outside"
+    )
+
+    fig = px.bar(
+        scrap_wc,
+        y="W/C",
+        x="Scrap",
+        text=scrap_wc["Scrap"].astype(int).astype(str),
+        color="Scrap",
+        color_continuous_scale="RdYlGn_r",
+        title="Scrap por W/C",
+        labels={
+            "Scrap": "Scrap (Pzas)",
+            "W/C": "Centro de Trabajo (W/C)",
+        },
+        height=500,
+    )
+
+    fig.update_traces(
+        textposition=scrap_wc["TextPosition"],
+        insidetextanchor="middle",
+    )
+    configurar_layout(fig)
+    configurar_ejes(
+        fig,
+        x_grid=True,
+        y_grid=False,
+        x_title="Scrap (Pzas)",
+        y_title="Centro de Trabajo (W/C)",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def grafica_runrate_wc(df_wc, selected_shifts_global):
+    df_wc_filtrado = df_wc.copy()
+
+    if selected_shifts_global:
+        df_wc_filtrado = df_wc_filtrado[
+            df_wc_filtrado["Shift"].isin(selected_shifts_global)
+        ].copy()
+
+    df_wc_filtrado["Expected Run Rate /hr"] = pd.to_numeric(
+        df_wc_filtrado["Expected Run Rate /hr"],
+        errors="coerce",
+    )
+    df_wc_filtrado["Actual Run Rate /hr"] = pd.to_numeric(
+        df_wc_filtrado["Actual Run Rate /hr"],
+        errors="coerce",
+    )
+
+    runrate_wc = (
+        df_wc_filtrado.groupby("W/C")[
+            ["Expected Run Rate /hr", "Actual Run Rate /hr"]
+        ]
+        .mean()
+        .reset_index()
+    )
+
+    runrate_wc = runrate_wc.dropna(
+        subset=["Expected Run Rate /hr", "Actual Run Rate /hr"]
+    )
+
+    runrate_wc = runrate_wc.sort_values(
+        by="Expected Run Rate /hr",
+        ascending=False,
+    )
+
+    if runrate_wc.empty:
+        st.info("No hay datos de Run Rate para mostrar.")
+        return
+
+    runrate_wc_melted = runrate_wc.melt(
+        id_vars="W/C",
+        value_vars=[
+            "Expected Run Rate /hr",
+            "Actual Run Rate /hr",
+        ],
+        var_name="Tipo",
+        value_name="Run Rate",
+    )
+
+    max_value = runrate_wc_melted["Run Rate"].max()
+    runrate_wc_melted["TextPosition"] = runrate_wc_melted["Run Rate"].apply(
+        lambda x: "inside" if x > max_value * 0.15 else "outside"
+    )
+
+    fig = px.bar(
+        runrate_wc_melted,
+        y="W/C",
+        x="Run Rate",
+        color="Tipo",
+        text=runrate_wc_melted["Run Rate"].apply(lambda x: f"{x:.2f}"),
+        barmode="group",
+        color_discrete_map={
+            "Expected Run Rate /hr": "#1f77b4",
+            "Actual Run Rate /hr": "#ff7f0e",
+        },
+        labels={
+            "Run Rate": "Run Rate (unidades/hr)",
+            "W/C": "Centro de Trabajo (W/C)",
+        },
+        title="Expected vs Actual Run Rate por W/C",
+        height=550,
+    )
+
+    fig.update_traces(
+        textposition=runrate_wc_melted["TextPosition"],
+        insidetextanchor="middle",
+    )
+    configurar_layout(fig, height=550)
+    configurar_ejes(
+        fig,
+        x_grid=True,
+        y_grid=False,
+        x_title="Run Rate (unidades/hr)",
+        y_title="Centro de Trabajo (W/C)",
+    )
+    fig.update_layout(legend_title_text="")
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ============================================================
+# GRÁFICAS DE PERSONAL / TURNOS
+# ============================================================
+
+def grafica_empleados_turno(df_wc):
+    empleados_turno = (
+        df_wc.groupby("Shift")["Employee"]
+        .nunique()
+        .reset_index()
+        .sort_values(by="Employee", ascending=True)
+    )
+
+    fig = px.bar(
+        empleados_turno,
+        x="Shift",
+        y="Employee",
+        text=empleados_turno["Employee"].astype(str),
+        color="Employee",
+        color_continuous_scale="RdYlGn",
+        title="Empleados por Turno",
+        labels={
+            "Shift": "Turno",
+            "Employee": "Empleados únicos",
+        },
+        height=500,
+    )
+
+    agregar_texto_barra(fig, "%{text}")
+    configurar_layout(fig)
+    configurar_ejes(
+        fig,
+        x_grid=False,
+        y_grid=True,
+        x_title="Turno",
+        y_title="Empleados únicos",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def grafica_wo_turno(df_wc):
+    wo_por_turno = (
+        df_wc.groupby("Shift")["Job #"]
+        .nunique()
+        .reset_index()
+        .sort_values(by="Job #", ascending=True)
+    )
+
+    if wo_por_turno.empty:
+        st.info("No hay Work Orders para mostrar.")
+        return
+
+    max_value = wo_por_turno["Job #"].max()
+    wo_por_turno["TextPosition"] = wo_por_turno["Job #"].apply(
+        lambda x: "inside" if x > max_value * 0.15 else "outside"
+    )
+
+    fig = px.bar(
+        wo_por_turno,
+        x="Shift",
+        y="Job #",
+        text=wo_por_turno["Job #"].apply(lambda x: f"{x:.0f}"),
+        color="Job #",
+        color_continuous_scale="RdYlGn",
+        labels={
+            "Job #": "Cantidad de Work Orders",
+            "Shift": "Turno",
+        },
+        title="Work Orders por Turno",
+        height=400,
+    )
+
+    fig.update_traces(
+        textposition=wo_por_turno["TextPosition"],
+        insidetextanchor="middle",
+    )
+    configurar_layout(fig, height=400)
+    configurar_ejes(
+        fig,
+        x_grid=False,
+        y_grid=True,
+        x_title="Turno",
+        y_title="Cantidad de Work Orders",
+    )
+    fig.update_layout(showlegend=False)
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ============================================================
+# TOP 5 CENTROS CRÍTICOS
+# ============================================================
+
+def mostrar_top5_centros(df_wc):
     st.subheader("📉 Centros de Trabajo con Indicadores Críticos")
 
     col_x, col_y, col_z = st.columns(3)
 
-    # Top 5 con menor eficiencia
     with col_x:
         st.markdown("**Menor Eficiencia (Top 5)**")
         top5_low_eff = (
@@ -148,19 +1272,20 @@ def dashboard():
         )
         st.dataframe(top5_low_eff, use_container_width=True)
 
-    # Top 5 con más downtime
     with col_y:
         st.markdown("**Más Tiempo de Downtime (Top 5)**")
         top5_downtime = (
             df_wc.groupby("W/C")["Production Downtime Hours"]
             .sum()
             .reset_index()
-            .sort_values(by="Production Downtime Hours", ascending=False)
+            .sort_values(
+                by="Production Downtime Hours",
+                ascending=False,
+            )
             .head(5)
         )
         st.dataframe(top5_downtime, use_container_width=True)
 
-    # Top 5 con más scrap
     with col_z:
         st.markdown("**Más Scrap (Top 5)**")
         top5_scrap = (
@@ -172,840 +1297,304 @@ def dashboard():
         )
         st.dataframe(top5_scrap, use_container_width=True)
 
-    # Gráfica de Eficiencia por Centro de Trabajo con filtro
-    st.subheader("⚙️ Eficiencia por Centro de Trabajo")
 
-    # Vista en cuadricula de 3 columnas
-    col_a, col_b = st.columns(2)
+# ============================================================
+# CUMPLIMIENTO AL PLAN
+# ============================================================
 
-    # Agrupar y calcular promedio de eficiencia por W/C
-    # efficiency_wc = df_wc.groupby("W/C")["Efficiency"].mean().reset_index()
-
-    # Tema profesional para todas las gráficas
-    sns.set_theme(
-        style="whitegrid",
-        context="talk",  # para dashboards es ideal, usa "notebook" o "paper" para reportes
-        palette="colorblind"
-    )
-
-    # Ajustes generales de Matplotlib
-    plt.rcParams.update({
-        "axes.facecolor": "white",
-        "axes.edgecolor": "#333333",
-        "axes.grid": True,
-        "grid.color": "#DDDDDD",
-        "grid.linestyle": "--",
-        "axes.titleweight": "bold",
-        "axes.titlesize": 16,
-        "axes.labelsize": 14,
-        "xtick.labelsize": 12,
-        "ytick.labelsize": 12,
-        "legend.fontsize": 12,
-        "figure.autolayout": True,  # evita recortes
-        "figure.dpi": 120  # resolución adecuada para Streamlit
-    })
-
-    # Gráfica 1: Eficiencia por W/C
-    with col_a:
-        efficiency_wc = (
-            df_wc.groupby("W/C")["Efficiency"]
-            .mean()
-            .reset_index()
-            .sort_values(by="Efficiency", ascending=True)
-        )
-
-        # Gráfico interactivo con Plotly Express
-        fig = px.bar(
-            efficiency_wc,
-            x="W/C",
-            y="Efficiency",
-            text="Efficiency",
-            color="Efficiency",
-            color_continuous_scale="RdBu",
-            title="Promedio de Eficiencia",
-            labels={
-                "W/C": "Centro de Trabajo (W/C)",
-                "Efficiency": "Eficiencia (%)"
-            },
-            height=500
-        )
-
-        # Personalización de texto y layout
-        fig.update_traces(
-            texttemplate='%{text:.1f}%',
-            textposition='inside',
-            insidetextanchor='middle'
-        )
-
-        fig.update_layout(
-            yaxis_title="Eficiencia (%)",
-            xaxis_title="Centro de Trabajo (W/C)",
-            plot_bgcolor='rgba(0,0,0,0)',
-            yaxis=dict(showgrid=True, gridcolor='lightgrey', range=[0, 100]),
-            xaxis=dict(showgrid=False),
-            title_font=dict(size=18, color='white', family="Arial"),
-            font=dict(size=12),
-            margin=dict(t=50, l=50, r=30, b=80)
-        )
-
-        # Rotar etiquetas del eje X
-        fig.update_xaxes(tickangle=35)
-
-        # Mostrar gráfico en Streamlit
-        st.plotly_chart(fig, use_container_width=True)
-
-    # Gráfica 2: Partes Producidas por W/C
-    with col_b:
-        # Filtrar TimeSheet únicos antes de agrupar
-        df_unique_timesheet_parts = df_wc.drop_duplicates(subset=["Timesheet #"])
-        quantity_wc = (
-            df_unique_timesheet_parts.groupby("W/C")["Quantity"]
-            .sum()
-            .reset_index()
-            .sort_values(by="Quantity", ascending=True)
-        )
-
-        # Gráfico interactivo con Plotly Express
-        fig = px.bar(
-            quantity_wc,
-            x="Quantity",
-            y="W/C",
-            text="Quantity",
-            color="Quantity",
-            color_continuous_scale="PuRd",
-            title="Producción por W/C",
-            labels={
-                "Quantity": "Partes Producidas",
-                "W/C": "Centro de Trabajo (W/C)"
-            },
-            height=500
-        )
-
-        # Personalización de texto y layout
-        fig.update_traces(
-            texttemplate='%{text:,}',  # separador de miles
-            textposition='inside',
-            insidetextanchor='middle'
-        )
-
-        fig.update_layout(
-            xaxis_title="Partes Producidas",
-            yaxis_title="Centro de Trabajo (W/C)",
-            plot_bgcolor='rgba(0,0,0,0)',
-            xaxis=dict(showgrid=True, gridcolor='lightgrey'),
-            yaxis=dict(showgrid=False),
-            title_font=dict(size=18, color='white', family="Arial"),
-            font=dict(size=12),
-            margin=dict(t=50, l=50, r=30, b=50)
-        )
-
-        # Mostrar gráfico en Streamlit
-        st.plotly_chart(fig, use_container_width=True)
-
-    # Segunda fila de gráficas
-    col_c, col_d = st.columns(2)
-
-    # Gráfica 3: Downtime por W/C
-    if "df_downtime_procesado" in st.session_state:
-        df_downtime = st.session_state.df_downtime_procesado
-
-        # Filtramos downtime con los mismos criterios
-        df_downtime_filtrado = filtrar_downtime(
-            df_downtime,
-            fechas=fechas,
-            turnos=turnos_seleccionados,
-            wc_types=wc_types_seleccionados,
-            wcs=selected_wc
-        )
-
-        with col_c:
-            downtime_wc = (
-                df_downtime_filtrado.groupby("W/C")["Horas Downtime"]
-                .sum()
-                .reset_index()
-                .sort_values(by="Horas Downtime", ascending=False)
-            )
-
-            if downtime_wc.empty:
-                st.info("No hay datos de downtime en el rango de fechas y filtros seleccionados.")
-            else:
-                fig = px.bar(
-                    downtime_wc,
-                    y="W/C",
-                    x="Horas Downtime",
-                    orientation='h',
-                    text="Horas Downtime",
-                    color="Horas Downtime",
-                    color_continuous_scale="gnbu",
-                    labels={
-                        "W/C": "Centro de Trabajo (W/C)",
-                        "Horas Downtime": "Downtime (hrs)"
-                    },
-                    title="Downtime Total por W/C"
-                )
-
-                fig.update_traces(
-                    texttemplate='%{text:.2f}',
-                    textposition='inside',
-                    insidetextanchor='middle'
-                )
-
-                fig.update_layout(
-                    height=600,
-                    xaxis_title="Downtime (hrs)",
-                    yaxis_title="Centro de Trabajo (W/C)",
-                    # coloraxis_showscale=False,
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    xaxis=dict(showgrid=True, gridcolor='lightgrey'),
-                    yaxis=dict(showgrid=False),
-                    title_font=dict(size=18, color='white', family="Arial"),
-                    font=dict(size=12)
-                )
-
-                st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("Debes cargar y procesar el archivo de downtime por W/C primero.")
-
-    # Gráfica 4: Razones de Downtime
-    if "df_downtime_procesado" in st.session_state:
-        df_downtime = st.session_state.df_downtime_procesado
-
-        df_downtime_filtrado = filtrar_downtime(
-            df_downtime,
-            fechas=fechas,
-            turnos=turnos_seleccionados,
-            wc_types=wc_types_seleccionados,
-            wcs=selected_wc
-        )
-        with col_d:
-            if "Razones" in df_downtime_filtrado.columns:
-                downtime_por_wc = df_downtime_filtrado.groupby(
-                    ["W/C", "Razones"]
-                )["Horas Downtime"].sum().reset_index()
-
-                downtime_por_wc = downtime_por_wc.merge(
-                    catalogo_downtime,
-                    left_on="Razones",
-                    right_on="Reason ID",
-                    how="left"
-                )
-
-                if downtime_por_wc.empty:
-                    st.info("No hay datos de downtime en el rango de fechas y filtros seleccionados.")
-                else:
-                    fig = px.bar(
-                        downtime_por_wc,
-                        x="Horas Downtime",
-                        y="W/C",
-                        color="Description",
-                        text="Horas Downtime",
-                        orientation="h",
-                        title="Downtime por Razón y Centro de Trabajo",
-                        labels={
-                            "Horas Downtime": "Downtime (hrs)",
-                            "W/C": "Centro de Trabajo (W/C)",
-                            "Description": "Razón de Downtime"
-                        },
-                        color_discrete_sequence=px.colors.qualitative.Set2,
-                        height=600
-                    )
-
-                    fig.update_traces(
-                        texttemplate='%{text:.2f}',
-                        textposition='inside',
-                        insidetextanchor='middle'
-                    )
-
-                    fig.update_layout(
-                        barmode="group",
-                        xaxis_title="Downtime (hrs)",
-                        yaxis_title="Centro de Trabajo (W/C)",
-                        plot_bgcolor='rgba(0,0,0,0)',
-                        xaxis=dict(showgrid=True, gridcolor='lightgrey'),
-                        yaxis=dict(showgrid=False),
-                        title_font=dict(size=18, color='white', family="Arial"),
-                        font=dict(size=12),
-                        legend_title_text="Razón de Downtime"
-                    )
-
-                    st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("La columna 'Razones' no está presente en el downtime procesado.")
-    else:
-        st.warning("Debes cargar y procesar el archivo de downtime por W/C primero.")
-
-    # Tercer fila de gráficas
-    col_e, col_f = st.columns(2)
-
-    # Gráfica 5: Eficiencia promedio por Empleado
-    with col_e:
-        eficiencia_empleado = (
-            df_wc.groupby("Employee")["Efficiency"]
-            .mean()
-            .reset_index()
-            .sort_values(by="Efficiency", ascending=False)
-        )
-
-        # Gráfico interactivo con Plotly Express
-        fig = px.bar(
-            eficiencia_empleado,
-            x="Efficiency",
-            y="Employee",
-            text=eficiencia_empleado["Efficiency"].round(1).astype(str) + '%',
-            color="Efficiency",
-            color_continuous_scale="RdPu",
-            title="Eficiencia Promedio por Empleado",
-            labels={
-                "Efficiency": "Eficiencia (%)",
-                "Employee": "Empleado"
-            },
-            height=600
-        )
-
-        # Personalización de layout y etiquetas
-        fig.update_traces(
-            textposition='inside',
-            insidetextanchor='middle'
-        )
-
-        fig.update_layout(
-            xaxis_title="Eficiencia (%)",
-            yaxis_title="Empleado",
-            xaxis=dict(range=[0, 100], showgrid=True, gridcolor='lightgrey'),
-            yaxis=dict(showgrid=False),
-            plot_bgcolor='rgba(0,0,0,0)',
-            title_font=dict(size=18, color='white', family="Arial"),
-            font=dict(size=12),
-            margin=dict(t=50, l=50, r=30, b=50)
-        )
-
-        # Mostrar gráfico en Streamlit
-        st.plotly_chart(fig, use_container_width=True)
-
-    # Gráfica 6: OEE por W/C
-    with col_f:
-        oee_wc = (
-            df_wc.groupby("W/C")["OEE"]
-            .mean()
-            .reset_index()
-            .sort_values(by="OEE", ascending=False)
-        )
-
-        max_value = oee_wc["OEE"].max()
-
-        # Definir posición de las etiquetas según tamaño
-        oee_wc["TextPosition"] = oee_wc["OEE"].apply(
-            lambda x: 'inside' if x > max_value * 0.15 else 'outside'
-        )
-
-        # Crear gráfico con Plotly Express
-        fig = px.bar(
-            oee_wc,
-            y="W/C",
-            x="OEE",
-            text=oee_wc["OEE"].apply(lambda x: f'{x:.2f}%'),
-            color="OEE",
-            color_continuous_scale="Magma",
-            title="OEE Promedio por W/C",
-            labels={
-                "OEE": "OEE Promedio (%)",
-                "W/C": "Centro de Trabajo (W/C)"
-            },
-            height=500
-        )
-
-        # Personalizar etiquetas y layout
-        fig.update_traces(
-            textposition=oee_wc["TextPosition"],
-            insidetextanchor='middle'
-        )
-
-        fig.update_layout(
-            xaxis_title="OEE Promedio (%)",
-            yaxis_title="Centro de Trabajo (W/C)",
-            xaxis=dict(showgrid=True, gridcolor='lightgrey', range=[0, 100]),
-            yaxis=dict(showgrid=False),
-            plot_bgcolor='rgba(0,0,0,0)',
-            title_font=dict(size=18, color='white', family="Arial"),
-            font=dict(size=12),
-            margin=dict(t=50, l=50, r=30, b=50)
-        )
-
-        # Mostrar gráfico en Streamlit
-        st.plotly_chart(fig, use_container_width=True)
-
-    col_g, col_h = st.columns(2)
-
-    # Gráfica 7: horas por W/C
-    with col_g:
-        # Filtrar TimeSheet únicos antes de agrupar
-        df_unique_timesheet = df_wc.drop_duplicates(subset=["Timesheet #"])
-
-        horas_wc = (
-            df_unique_timesheet.groupby("W/C")["Hours"]
-            .sum()
-            .reset_index()
-            .sort_values(by="Hours", ascending=False)
-        )
-
-        max_value = horas_wc["Hours"].max()
-
-        # Definir posición de los textos
-        horas_wc["TextPosition"] = horas_wc["Hours"].apply(
-            lambda x: 'inside' if x > max_value * 0.15 else 'outside'
-        )
-
-        # Gráfico interactivo con Plotly Express
-        fig = px.bar(
-            horas_wc,
-            y="W/C",
-            x="Hours",
-            text=horas_wc["Hours"].round(2).astype(str),
-            color="Hours",
-            color_continuous_scale="Peach",
-            title="Total de Horas por W/C",
-            labels={
-                "Hours": "Total de Horas",
-                "W/C": "Centro de Trabajo (W/C)"
-            },
-            height=500
-        )
-
-        # Personalización de layout y etiquetas
-        fig.update_traces(
-            textposition=horas_wc["TextPosition"],
-            insidetextanchor='middle'
-        )
-
-        fig.update_layout(
-            xaxis_title="Total de Horas",
-            yaxis_title="Centro de Trabajo (W/C)",
-            xaxis=dict(showgrid=True, gridcolor='lightgrey'),
-            yaxis=dict(showgrid=False),
-            plot_bgcolor='rgba(0,0,0,0)',
-            title_font=dict(size=18, color='white', family="Arial"),
-            font=dict(size=12),
-            margin=dict(t=50, l=50, r=30, b=50)
-        )
-
-        # Mostrar gráfico en Streamlit
-        st.plotly_chart(fig, use_container_width=True)
-
-    # Gráfica 8: Non-production by W/C
-    with col_h:
-        # Eliminar jobs duplicados para esta gráfica
-        df_unique = df_wc.drop_duplicates(subset=["Timesheet #"])
-
-        # Agrupar y sumar las Non-production Downtime Hours por W/C
-        non_prod_wc = (
-            df_unique.groupby("W/C")["Non-production Downtime Hours"]
-            .sum()
-            .reset_index()
-            .sort_values(by="Non-production Downtime Hours", ascending=False)
-        )
-
-        max_value = non_prod_wc["Non-production Downtime Hours"].max()
-
-        # Definir posición de los textos
-        non_prod_wc["TextPosition"] = non_prod_wc["Non-production Downtime Hours"].apply(
-            lambda x: 'inside' if x > max_value * 0.15 else 'outside'
-        )
-
-        # Gráfico interactivo con Plotly Express
-        fig = px.bar(
-            non_prod_wc,
-            y="W/C",
-            x="Non-production Downtime Hours",
-            text=non_prod_wc["Non-production Downtime Hours"].round(2).astype(str),
-            color="Non-production Downtime Hours",
-            color_continuous_scale="amp",
-            title="Total de Horas No-Producción por W/C",
-            labels={
-                "Non-production Downtime Hours": "Horas No-Producción",
-                "W/C": "Centro de Trabajo (W/C)"
-            },
-            height=500
-        )
-
-        # Personalización de layout y etiquetas
-        fig.update_traces(
-            textposition=non_prod_wc["TextPosition"],
-            insidetextanchor='middle'
-        )
-
-        fig.update_layout(
-            xaxis_title="Total de Horas No-Producción",
-            yaxis_title="Centro de Trabajo (W/C)",
-            xaxis=dict(showgrid=True, gridcolor='lightgrey'),
-            yaxis=dict(showgrid=False),
-            plot_bgcolor='rgba(0,0,0,0)',
-            title_font=dict(size=18, color='white', family="Arial"),
-            font=dict(size=12),
-            margin=dict(t=50, l=50, r=30, b=50)
-        )
-
-        # Mostrar gráfico en Streamlit
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Cuarta fila de gráficas
-    col_i, col_j = st.columns(2)
-
-    # Gráfica 9: Scrap por W/C
-    with col_i:
-        # Filtrar TimeSheet únicos antes de agrupar
-        df_unique_timesheet_scrap = df_wc.drop_duplicates(subset=["Timesheet #"])
-
-        scrap_wc = (
-            df_unique_timesheet_scrap.groupby("W/C")["Scrap"]
-            .sum()
-            .reset_index()
-            .sort_values(by="Scrap", ascending=False)
-        )
-
-        max_value = scrap_wc["Scrap"].max()
-
-        # Definir posición de las etiquetas según tamaño
-        scrap_wc["TextPosition"] = scrap_wc["Scrap"].apply(
-            lambda x: 'inside' if x > max_value * 0.15 else 'outside'
-        )
-
-        # Crear gráfico con Plotly Express
-        fig = px.bar(
-            scrap_wc,
-            y="W/C",
-            x="Scrap",
-            text=scrap_wc["Scrap"].astype(int).astype(str),
-            color="Scrap",
-            color_continuous_scale="Inferno",
-            title="Scrap por W/C",
-            labels={
-                "Scrap": "Scrap (Pzas)",
-                "W/C": "Centro de Trabajo (W/C)"
-            },
-            height=500
-        )
-
-        # Personalizar etiquetas y layout
-        fig.update_traces(
-            textposition=scrap_wc["TextPosition"],
-            insidetextanchor='middle'
-        )
-
-        fig.update_layout(
-            xaxis_title="Scrap (Pzas)",
-            yaxis_title="Centro de Trabajo (W/C)",
-            xaxis=dict(showgrid=True, gridcolor='lightgrey'),
-            yaxis=dict(showgrid=False),
-            plot_bgcolor='rgba(0,0,0,0)',
-            title_font=dict(size=18, color='white', family="Arial"),
-            font=dict(size=12),
-            margin=dict(t=50, l=50, r=30, b=50)
-        )
-
-        # Mostrar gráfico en Streamlit
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Gráfica 10: Expected vs Actual Run Rate /hr por W/C
-    with col_j:
-        # Filtrar df_wc por turno si se seleccionó alguno
-        df_wc_filtrado = df_wc.copy()
-
-        if turnos_seleccionados:
-            df_wc_filtrado = df_wc_filtrado[df_wc_filtrado["Shift"].isin(turnos_seleccionados)]
-
-        # Asegurarnos que son numéricos
-        df_wc_filtrado["Expected Run Rate /hr"] = pd.to_numeric(df_wc_filtrado["Expected Run Rate /hr"],
-                                                                errors="coerce")
-        df_wc_filtrado["Actual Run Rate /hr"] = pd.to_numeric(df_wc_filtrado["Actual Run Rate /hr"],
-                                                              errors="coerce")
-
-        # Agrupar por W/C y calcular promedios
-        runrate_wc = df_wc_filtrado.groupby("W/C")[
-            ["Expected Run Rate /hr", "Actual Run Rate /hr"]].mean().reset_index()
-        runrate_wc = runrate_wc.sort_values(by="Expected Run Rate /hr", ascending=False)
-
-        runrate_wc.dropna(subset=["Expected Run Rate /hr", "Actual Run Rate /hr"], inplace=True)
-
-        # Transformar a formato largo
-        runrate_wc_melted = runrate_wc.melt(
-            id_vars="W/C",
-            value_vars=["Expected Run Rate /hr", "Actual Run Rate /hr"],
-            var_name="Tipo",
-            value_name="Run Rate"
-        )
-
-        max_value = runrate_wc_melted["Run Rate"].max()
-
-        # Posiciones dinámicas de etiquetas
-        runrate_wc_melted["TextPosition"] = runrate_wc_melted["Run Rate"].apply(
-            lambda x: 'inside' if x > max_value * 0.15 else 'outside'
-        )
-
-        # Gráfica con Plotly
-        fig = px.bar(
-            runrate_wc_melted,
-            y="W/C",
-            x="Run Rate",
-            color="Tipo",
-            text=runrate_wc_melted["Run Rate"].apply(lambda x: f'{x:.2f}'),
-            barmode="group",
-            color_discrete_map={
-                "Expected Run Rate /hr": "#1f77b4",
-                "Actual Run Rate /hr": "#ff7f0e"
-            },
-            labels={
-                "Run Rate": "Run Rate (unidades/hr)",
-                "W/C": "Centro de Trabajo (W/C)"
-            },
-            title="Expected vs Actual Run Rate por W/C",
-            height=550
-        )
-
-        # Personalizar etiquetas y estilo
-        fig.update_traces(
-            textposition=runrate_wc_melted["TextPosition"],
-            insidetextanchor='middle'
-        )
-
-        fig.update_layout(
-            xaxis_title="Run Rate (unidades/hr)",
-            yaxis_title="Centro de Trabajo (W/C)",
-            xaxis=dict(showgrid=True, gridcolor='lightgrey'),
-            yaxis=dict(showgrid=False),
-            plot_bgcolor='rgba(0,0,0,0)',
-            title_font=dict(size=18, color='white', family="Arial"),
-            font=dict(size=12),
-            margin=dict(t=50, l=50, r=30, b=50),
-            legend_title_text=""
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
-
-    # Siguiente fila
-    col_k, col_l = st.columns(2)
-
-    # Gráfica 12: Emeplados por turno
-    with col_k:
-        empleados_turno = (
-            df_wc.groupby("Shift")["Employee"]
-            .nunique()
-            .reset_index()
-            .sort_values(by="Employee", ascending=True)
-        )
-
-        # Gráfico interactivo con Plotly Express
-        fig = px.bar(
-            empleados_turno,
-            x="Shift",
-            y="Employee",
-            text=empleados_turno["Employee"].astype(str),
-            color="Employee",
-            color_continuous_scale="Agsunset",
-            title="Empleados por Turno",
-            labels={
-                "Shift": "Turno",
-                "Employee": "Empleados únicos"
-            },
-            height=500
-        )
-
-        # Personalización de layout y etiquetas
-        fig.update_traces(
-            textposition='inside',
-            insidetextanchor='middle'
-        )
-
-        fig.update_layout(
-            xaxis_title="Turno",
-            yaxis_title="Empleados únicos",
-            xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=True, gridcolor='lightgrey'),
-            plot_bgcolor='rgba(0,0,0,0)',
-            title_font=dict(size=18, color='white', family="Arial"),
-            font=dict(size=12),
-            margin=dict(t=50, l=50, r=30, b=50)
-        )
-
-        # Mostrar gráfico en Streamlit
-        st.plotly_chart(fig, use_container_width=True)
-
-    # Gráfica: Wo por Turno
-    with col_l:
-        # Agrupar por turno y contar WO únicos
-        wo_por_turno = (
-            df_wc.groupby("Shift")["Job #"]
-            .nunique()
-            .reset_index()
-            .sort_values(by="Job #", ascending=True)
-        )
-
-        max_value = wo_por_turno["Job #"].max()
-
-        # Posiciones dinámicas de etiquetas
-        wo_por_turno["TextPosition"] = wo_por_turno["Job #"].apply(
-            lambda x: 'inside' if x > max_value * 0.15 else 'outside'
-        )
-
-        # Gráfica con Plotly
-        fig = px.bar(
-            wo_por_turno,
-            x="Shift",
-            y="Job #",
-            text=wo_por_turno["Job #"].apply(lambda x: f'{x:.0f}'),
-            color="Job #",
-            color_continuous_scale="Magenta",
-            labels={"Job #": "Cantidad de Work Orders", "Shift": "Turno"},
-            title="Work Orders por Turno",
-            height=400
-        )
-
-        # Personalizar etiquetas y estilo
-        fig.update_traces(
-            textposition=wo_por_turno["TextPosition"],
-            insidetextanchor='middle'
-        )
-
-        fig.update_layout(
-            xaxis_title="Turno",
-            yaxis_title="Cantidad de Work Orders",
-            xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=True, gridcolor='lightgrey'),
-            plot_bgcolor='rgba(0,0,0,0)',
-            title_font=dict(size=18, color='White', family="Arial"),
-            font=dict(size=12),
-            margin=dict(t=50, l=50, r=30, b=50),
-            showlegend=False
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
-
-    # with col_l:
-    #    if not df_wc.empty:
-    #        diccionario_dfs = {
-    #            "Downtime por W_C": downtime_wc,
-    #            "Eficiencia por Empleado": eficiencia_empleado,
-    #            "WorkOrders por Turno": wo_por_turno,
-    #            "Horas por W_C": horas_wc,
-    #            "Scrap por W_C": scrap_wc,
-    #            "OEE por W_C": oee_wc,
-    #            "RunRate por W_C": runrate_wc
-    #        }
-
-    #    exportar_varias_hojas_excel(diccionario_dfs)
-
-    # Gráfica 11: Cumplimiento al Plan de Producción por W/C
+def mostrar_cumplimiento_plan(df_filtrado):
     st.subheader("📈 Cumplimiento al Plan de Producción por W/C")
 
-    if st.session_state.df_plan is not None:
-        df_plan = st.session_state.df_plan
+    if st.session_state.df_plan is None:
+        st.info(
+            "Carga primero el archivo de Scheduled Jobs para mostrar esta sección."
+        )
+        return
 
-        wc_types_local = df_filtrado["W/C Type"].unique().tolist()
+    df_plan = st.session_state.df_plan
 
-        with st.container():
-            col_reset, col_filters = st.columns([1, 5])
+    wc_types_local = sorted(
+        df_filtrado["W/C Type"].dropna().unique().tolist(),
+        key=str,
+    )
 
-            with col_filters:
-                selected_wc_type_local = st.selectbox(
-                    "Selecciona W/C Type para Cumplimiento al Plan:",
-                    options=wc_types_local,
-                    key="wc_type_local"
-                )
+    if not wc_types_local:
+        st.info("No hay W/C Type disponibles con los filtros seleccionados.")
+        return
 
-                df_plan_filtrado_local = df_plan[df_plan["W/C Type"] == selected_wc_type_local]
+    col_reset, col_filters = st.columns([1, 5])
 
-                wc_local = df_plan_filtrado_local["W/C"].unique().tolist()
-
-                selected_wc_local = st.multiselect(
-                    "Selecciona W/C (puedes elegir varios o dejar vacío para todos):",
-                    options=wc_local,
-                    key="wc_local"
-                )
-
-        if selected_wc_local:
-            df_plan_filtrado_local = df_plan_filtrado_local[df_plan_filtrado_local["W/C"].isin(selected_wc_local)]
-
-        # Cumplimiento Agrupado
-        cumplimiento_plan = df_plan_filtrado_local.groupby("W/C")[
-            ["To Make", "Produced", "Can Make", "Remaining"]].sum().reset_index()
-
-        cumplimiento_plan["Cumplimiento (%)"] = (
-                (cumplimiento_plan["Produced"] / cumplimiento_plan["To Make"]) * 100
-        ).round(2)
-        cumplimiento_plan["Cumplimiento (%)"].fillna(0, inplace=True)
-
-        cumplimiento_plan = cumplimiento_plan.sort_values(by="Cumplimiento (%)", ascending=True)
-
-        # Gráfica Cumplimiento
-        fig = px.bar(
-            cumplimiento_plan,
-            x="W/C",
-            y="Cumplimiento (%)",
-            text=cumplimiento_plan["Cumplimiento (%)"].apply(lambda x: f'{x:.1f}%'),
-            color="Cumplimiento (%)",
-            color_continuous_scale="teal",
-            title=f'Cumplimiento al Plan ({selected_wc_type_local})',
-            labels={"Cumplimiento (%)": "Cumplimiento (%)", "W/C": "Centro de Trabajo"},
-            height=450
+    with col_filters:
+        selected_plan_wc_type = st.selectbox(
+            "Selecciona W/C Type para Cumplimiento al Plan:",
+            options=wc_types_local,
+            key="plan_wc_type",
         )
 
-        fig.update_traces(textposition='outside')
+        df_plan_filtrado = df_plan[
+            df_plan["W/C Type"] == selected_plan_wc_type
+        ].copy()
 
-        fig.update_layout(
-            yaxis=dict(showgrid=True, gridcolor='lightgrey'),
-            xaxis=dict(showgrid=False),
-            plot_bgcolor='rgba(0,0,0,0)',
-            title_font=dict(size=18),
-            font=dict(size=12),
-            margin=dict(t=50, l=50, r=30, b=50),
-            showlegend=False,
-            autosize=True
+        wc_local = sorted(
+            df_plan_filtrado["W/C"].dropna().unique().tolist(),
+            key=str,
         )
 
-        # Elimina límite inferior para permitir negativos
-        fig.update_yaxes(automargin=True)
-
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Gráfica de piezas faltantes
-        st.subheader("Piezas faltantes para cumplimiento")
-
-        piezas_faltantes = df_plan_filtrado_local.groupby("W/C")[["Can Make", "Remaining"]].sum().reset_index()
-        piezas_faltantes["Piezas Faltantes"] = (piezas_faltantes["Can Make"] - piezas_faltantes["Remaining"])
-        piezas_faltantes = piezas_faltantes.sort_values(by="Piezas Faltantes", ascending=True)
-
-        fig_faltantes = px.bar(
-            piezas_faltantes,
-            x="W/C",
-            y="Piezas Faltantes",
-            text=piezas_faltantes["Piezas Faltantes"],
-            color="Piezas Faltantes",
-            color_continuous_scale="oranges",
-            title=f'Piezas Faltantes ({selected_wc_type_local})',
-            labels={"Piezas Faltantes": "Piezas Faltantes", "W/C": "Centro de Trabajo"},
-            height=450,
+        selected_plan_wcs = st.multiselect(
+            "Selecciona W/C (vacío = todos):",
+            options=wc_local,
+            key="plan_wcs",
         )
 
-        fig_faltantes.update_traces(textposition="outside")
+    if selected_plan_wcs:
+        df_plan_filtrado = df_plan_filtrado[
+            df_plan_filtrado["W/C"].isin(selected_plan_wcs)
+        ].copy()
 
-        fig_faltantes.update_layout(
-            yaxis=dict(showgrid=True, gridcolor='lightgrey'),
-            xaxis=dict(showgrid=False),
-            plot_bgcolor='rgba(0,0,0,0)',
-            title_font=dict(size=18),
-            font=dict(size=12),
-            margin=dict(t=50, l=50, r=30, b=50),
-            showlegend=False
+    if df_plan_filtrado.empty:
+        st.info("No hay datos del plan para los filtros seleccionados.")
+        return
+
+    # --------------------------------------------------------
+    # Cumplimiento agrupado
+    # --------------------------------------------------------
+    cumplimiento_plan = (
+        df_plan_filtrado.groupby("W/C")[
+            ["To Make", "Produced", "Can Make", "Remaining"]
+        ]
+        .sum()
+        .reset_index()
+    )
+
+    denominador = cumplimiento_plan["To Make"].replace(0, pd.NA)
+
+    cumplimiento_plan["Cumplimiento (%)"] = (
+        cumplimiento_plan["Produced"]
+        .div(denominador)
+        .mul(100)
+        .fillna(0)
+        .round(2)
+    )
+
+    cumplimiento_plan = cumplimiento_plan.sort_values(
+        by="Cumplimiento (%)",
+        ascending=True,
+    )
+
+    fig = px.bar(
+        cumplimiento_plan,
+        x="W/C",
+        y="Cumplimiento (%)",
+        text=cumplimiento_plan["Cumplimiento (%)"].apply(
+            lambda x: f"{x:.1f}%"
+        ),
+        color="Cumplimiento (%)",
+        color_continuous_scale="teal",
+        title=f"Cumplimiento al Plan ({selected_plan_wc_type})",
+        labels={
+            "Cumplimiento (%)": "Cumplimiento (%)",
+            "W/C": "Centro de Trabajo",
+        },
+        height=450,
+    )
+
+    fig.update_traces(textposition="outside")
+    configurar_layout(fig, height=450)
+    configurar_ejes(
+        fig,
+        x_grid=False,
+        y_grid=True,
+        x_title="Centro de Trabajo",
+        y_title="Cumplimiento (%)",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # --------------------------------------------------------
+    # Piezas faltantes
+    # --------------------------------------------------------
+    st.subheader("Piezas faltantes para cumplimiento")
+
+    piezas_faltantes = (
+        df_plan_filtrado.groupby("W/C")[["Can Make", "Remaining"]]
+        .sum()
+        .reset_index()
+    )
+
+    piezas_faltantes["Piezas Faltantes"] = piezas_faltantes["Remaining"]
+    piezas_faltantes = piezas_faltantes.sort_values(
+        by="Piezas Faltantes",
+        ascending=True,
+    )
+
+    fig_faltantes = px.bar(
+        piezas_faltantes,
+        x="W/C",
+        y="Piezas Faltantes",
+        text=piezas_faltantes["Piezas Faltantes"],
+        color="Piezas Faltantes",
+        color_continuous_scale="oranges",
+        title=f"Piezas Faltantes ({selected_plan_wc_type})",
+        labels={
+            "Piezas Faltantes": "Piezas Faltantes",
+            "W/C": "Centro de Trabajo",
+        },
+        height=450,
+    )
+
+    fig_faltantes.update_traces(textposition="outside")
+    configurar_layout(fig_faltantes, height=450)
+    configurar_ejes(
+        fig_faltantes,
+        x_grid=False,
+        y_grid=True,
+        x_title="Centro de Trabajo",
+        y_title="Piezas Faltantes",
+    )
+
+    st.plotly_chart(fig_faltantes, use_container_width=True)
+
+    # --------------------------------------------------------
+    # Tablas
+    # --------------------------------------------------------
+    st.subheader("📄 Datos Filtrados para Cumplimiento al Plan")
+
+    columnas_plan = [
+        "W/C Type",
+        "W/C",
+        "Job #",
+        "Item",
+        "To Make",
+        "Can Make",
+        "Remaining",
+        "Produced",
+    ]
+
+    columnas_disponibles = [
+        col for col in columnas_plan
+        if col in df_plan_filtrado.columns
+    ]
+
+    st.dataframe(
+        df_plan_filtrado[columnas_disponibles],
+        use_container_width=True,
+    )
+
+    st.subheader("📊 Cumplimiento Agrupado por W/C")
+    st.dataframe(cumplimiento_plan, use_container_width=True)
+
+
+# ============================================================
+# DASHBOARD PRINCIPAL
+# ============================================================
+
+def dashboard():
+    if st.session_state.df_clean is None:
+        st.warning(
+            "Primero carga el reporte Production Timecard."
+        )
+        return
+
+    df = st.session_state.df_clean
+
+    # --------------------------------------------------------
+    # Filtros globales
+    # --------------------------------------------------------
+    (
+        df_filtrado,
+        df_wc,
+        fechas_globales,
+        selected_shifts_global,
+        selected_wc_types_global,
+        selected_wcs_global,
+    ) = obtener_filtros_globales(df)
+
+    if df_filtrado.empty:
+        st.warning("No existen registros con los filtros seleccionados.")
+        return
+
+    # --------------------------------------------------------
+    # KPIs
+    # --------------------------------------------------------
+    mostrar_kpis(df_filtrado)
+
+    # --------------------------------------------------------
+    # Top 5 críticos
+    # --------------------------------------------------------
+    if not df_wc.empty:
+        mostrar_top5_centros(df_wc)
+
+    # --------------------------------------------------------
+    # Producción
+    # --------------------------------------------------------
+    st.subheader("Indicadores de Producción")
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        grafica_eficiencia_wc(df_wc)
+
+    with col_b:
+        grafica_produccion_wc(df_wc)
+
+    # --------------------------------------------------------
+    # Downtime
+    # --------------------------------------------------------
+    df_downtime_filtrado = preparar_downtime(
+        fechas_globales=fechas_globales,
+        selected_shifts_global=selected_shifts_global,
+        selected_wc_types_global=selected_wc_types_global,
+        selected_wcs_global=selected_wcs_global,
+    )
+
+    mostrar_seccion_downtime(df_downtime_filtrado)
+
+    # --------------------------------------------------------
+    # Indicadores operativos
+    # --------------------------------------------------------
+    st.subheader("⚙️ Indicadores Operativos")
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        grafica_eficiencia_empleado(df_wc)
+
+    with col_b:
+        grafica_oee_wc(df_wc)
+
+    col_c, col_d = st.columns(2)
+
+    with col_c:
+        grafica_horas_wc(df_wc)
+
+    with col_d:
+        grafica_nonproduction_wc(df_wc)
+
+    col_e, col_f = st.columns(2)
+
+    with col_e:
+        grafica_scrap_wc(df_wc)
+
+    with col_f:
+        grafica_runrate_wc(
+            df_wc,
+            selected_shifts_global,
         )
 
-        st.plotly_chart(fig_faltantes, use_container_width=True)
+    # --------------------------------------------------------
+    # Personal y Work Orders
+    # --------------------------------------------------------
+    st.subheader("👥 Indicadores de Personal y Carga de Trabajo")
 
-        # Mostrar tablas
-        st.subheader("📄 Datos Filtrados para Cumplimiento al Plan")
-        st.dataframe(df_plan_filtrado_local[
-                         ["W/C Type", "W/C", "Job #", "Item", "To Make", "Can Make", "Remaining", "Produced"]])
+    col_a, col_b = st.columns(2)
 
-        st.subheader("📊 Cumplimiento Agrupado por W/C")
-        st.dataframe(cumplimiento_plan)
+    with col_a:
+        grafica_empleados_turno(df_wc)
 
-    else:
-        st.info("Carga primero el archivo de Scheduled Jobs para mostrar esta gráfica.")
+    with col_b:
+        grafica_wo_turno(df_wc)
+
+    # --------------------------------------------------------
+    # Plan de Producción
+    # --------------------------------------------------------
+    mostrar_cumplimiento_plan(df_filtrado)
