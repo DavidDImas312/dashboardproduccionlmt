@@ -1,0 +1,19 @@
+# Entorno virtual
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE
+.idea/
+.vscode/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Variables de entorno
+.env
