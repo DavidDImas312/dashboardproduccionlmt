@@ -1025,7 +1025,8 @@ def grafica_nonproduction_wc(df_wc):
 
 
 def grafica_scrap_wc(df_wc):
-    df_unique = df_wc.drop_duplicates(subset=["Timesheet #"])
+    #df_unique = df_wc.drop_duplicates(subset=["Timesheet #"])
+    df_unique = df_wc
 
     scrap_wc = (
         df_unique.groupby("W/C")["Scrap"]
