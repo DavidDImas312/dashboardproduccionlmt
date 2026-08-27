@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.express as px
 from utils import (
+    cargar_production_timecards,
+    separar_production_timecards,
     cargar_datos_columnas_requeridas,
     required_columns,
     required_columns_plan,
@@ -21,6 +23,9 @@ def inicializar_session_state():
     """Inicializa explícitamente todos los DataFrames usados por la aplicación."""
     estados_iniciales = {
         "df_clean": None,
+        "df_produccion_detalle": None,
+        "df_totales_wc": None,
+        "df_totales_wc_type": None,
         "df_plan": None,
         "df_downtime": None,
         "df_downtime_procesado": None,
@@ -65,20 +70,62 @@ def importar_reportes():
     )
 
     if uploaded_file is not None:
-        df, error = cargar_datos_columnas_requeridas(
+        df, error = cargar_production_timecards(
             uploaded_file,
-            required_columns,
             skiprows=4,
         )
 
         if df is None:
             st.error(f"❌ {error}")
         else:
-            st.session_state.df_clean = df
-            st.success("✅ Archivo de Production Timecard cargado.")
+                # ---------------------------------------------------------
+                # Separar registros de producción y totales del reporte
+                # ---------------------------------------------------------
 
-            if st.checkbox("Mostrar datos cargados", key="show_production_data"):
-                st.dataframe(df, use_container_width=True)
+                (
+                    df_detalle,
+                    df_totales_wc,
+                    df_totales_wc_type
+                ) = separar_production_timecards(df)
+
+                # DataFrame completo
+                st.session_state.df_clean = df
+
+                # Registros individuales
+                st.session_state.df_produccion_detalle = df_detalle
+
+                # Totales por W/C
+                st.session_state.df_totales_wc = df_totales_wc
+
+                # Totales por W/C Type
+                st.session_state.df_totales_wc_type = df_totales_wc_type
+
+                st.success("✅ Archivo de Production Timecard cargado.")
+
+                # ---------------------------------------------------------
+                # Información de validación
+                # ---------------------------------------------------------
+
+                st.write(
+                    f"Registros de producción: **{len(df_detalle):,}**"
+                )
+
+                st.write(
+                    f"Totales por W/C: **{len(df_totales_wc):,}**"
+                )
+
+                st.write(
+                    f"Totales por W/C Type: **{len(df_totales_wc_type):,}**"
+                )
+
+                if st.checkbox(
+                    "Mostrar datos cargados",
+                    key="show_production_data"
+                ):
+                    st.dataframe(
+                        df,
+                        use_container_width=True
+                    )
 
     # --------------------------------------------------------
     # Scheduled Jobs
@@ -439,38 +486,204 @@ def preparar_downtime(
 # ============================================================
 
 def mostrar_kpis(df_filtrado):
+
     st.subheader("Resumen General")
 
-    if df_filtrado.empty:
+    if df_filtrado is None or df_filtrado.empty:
         st.info("No hay datos para los filtros seleccionados.")
         return
 
-    df_unique_timesheet = df_filtrado.drop_duplicates(
-        subset=["Timesheet #"]
+    # --------------------------------------------------------
+    # Obtener W/C Type seleccionados
+    # --------------------------------------------------------
+
+    wc_types_seleccionados = (
+        df_filtrado["W/C Type"]
+        .dropna()
+        .unique()
+        .tolist()
     )
+
+    # --------------------------------------------------------
+    # Obtener los totales por W/C Type
+    # --------------------------------------------------------
+
+    df_totales_wc_type = st.session_state.get(
+        "df_totales_wc_type"
+    )
+
+    if (
+        df_totales_wc_type is None
+        or df_totales_wc_type.empty
+    ):
+        st.warning(
+            "No se encontraron los totales por W/C Type "
+            "del archivo Production Timecards."
+        )
+        return
+
+    # --------------------------------------------------------
+    # Filtrar total correspondiente al W/C Type
+    # --------------------------------------------------------
+
+    df_total_seleccionado = df_totales_wc_type[
+        df_totales_wc_type["W/C Type"].isin(
+            wc_types_seleccionados
+        )
+    ].copy()
+
+    if df_total_seleccionado.empty:
+        st.warning(
+            "No se encontró el total correspondiente "
+            "al W/C Type seleccionado."
+        )
+        return
+
+    # --------------------------------------------------------
+    # Convertir valores numéricos
+    # --------------------------------------------------------
+
+    columnas_numericas = [
+        "Efficiency",
+        "OEE",
+        "Quantity",
+        "Non-production Downtime Hours",
+    ]
+
+    for columna in columnas_numericas:
+
+        if columna in df_total_seleccionado.columns:
+
+            df_total_seleccionado[columna] = pd.to_numeric(
+                df_total_seleccionado[columna],
+                errors="coerce"
+            )
+
+    # ========================================================
+    # CASO 1: UN SOLO W/C TYPE SELECCIONADO
+    # ========================================================
+
+    if len(wc_types_seleccionados) == 1:
+
+        total = df_total_seleccionado.iloc[0]
+
+        eficiencia = total["Efficiency"]
+        oee = total["OEE"]
+        cantidad = total["Quantity"]
+        horas_no_produccion = total[
+            "Non-production Downtime Hours"
+        ]
+
+    # ========================================================
+    # CASO 2: VARIOS W/C TYPE SELECCIONADOS
+    # ========================================================
+
+    else:
+
+        # Para Quantity y Non-production podemos sumar
+        cantidad = df_total_seleccionado[
+            "Quantity"
+        ].sum()
+
+        horas_no_produccion = df_total_seleccionado[
+            "Non-production Downtime Hours"
+        ].sum()
+
+        # ----------------------------------------------------
+        # IMPORTANTE:
+        # No hacemos simplemente .mean() de Efficiency/OEE
+        # porque los W/C Type pueden tener diferente volumen.
+        #
+        # Por ahora mostramos el promedio ponderado por Hours.
+        # ----------------------------------------------------
+
+        if "Hours" in df_total_seleccionado.columns:
+
+            df_total_seleccionado["Hours"] = pd.to_numeric(
+                df_total_seleccionado["Hours"],
+                errors="coerce"
+            ).fillna(0)
+
+            horas = df_total_seleccionado["Hours"]
+
+            if horas.sum() > 0:
+
+                eficiencia = (
+                    (
+                        df_total_seleccionado["Efficiency"]
+                        * horas
+                    ).sum()
+                    / horas.sum()
+                )
+
+                oee = (
+                    (
+                        df_total_seleccionado["OEE"]
+                        * horas
+                    ).sum()
+                    / horas.sum()
+                )
+
+            else:
+                eficiencia = df_total_seleccionado[
+                    "Efficiency"
+                ].mean()
+
+                oee = df_total_seleccionado[
+                    "OEE"
+                ].mean()
+
+        else:
+
+            eficiencia = df_total_seleccionado[
+                "Efficiency"
+            ].mean()
+
+            oee = df_total_seleccionado[
+                "OEE"
+            ].mean()
+
+    # ========================================================
+    # MOSTRAR KPIs
+    # ========================================================
 
     col1, col2, col3, col4 = st.columns(4)
 
     col1.metric(
-        "Eficiencia Promedio",
-        f"{df_filtrado['Efficiency'].mean():.2f}%",
+        "Eficiencia",
+        (
+            f"{eficiencia:.2f}%"
+            if pd.notna(eficiencia)
+            else "N/D"
+        ),
     )
 
     col2.metric(
-        "OEE Promedio",
-        f"{df_filtrado['OEE'].mean():.2f}%",
+        "OEE",
+        (
+            f"{oee:.2f}%"
+            if pd.notna(oee)
+            else "N/D"
+        ),
     )
 
     col3.metric(
         "Cantidad Producida",
-        f"{df_unique_timesheet['Quantity'].sum():,.0f}",
+        (
+            f"{cantidad:,.0f}"
+            if pd.notna(cantidad)
+            else "N/D"
+        ),
     )
 
     col4.metric(
         "Horas No-Producción",
-        f"{df_unique_timesheet['Non-production Downtime Hours'].sum():,.2f}",
+        (
+            f"{horas_no_produccion:,.2f}"
+            if pd.notna(horas_no_produccion)
+            else "N/D"
+        ),
     )
-
 
 # ============================================================
 # HELPERS PARA GRÁFICAS
@@ -521,12 +734,76 @@ def agregar_texto_barra(fig, formato="%{text:.2f}", position="inside"):
 # ============================================================
 
 def grafica_eficiencia_wc(df_wc):
-    efficiency_wc = (
-        df_wc.groupby("W/C")["Efficiency"]
-        .mean()
-        .reset_index()
-        .sort_values(by="Efficiency", ascending=True)
+
+    df_totales_wc = st.session_state.get(
+        "df_totales_wc"
     )
+
+    if (
+        df_totales_wc is None
+        or df_totales_wc.empty
+    ):
+        st.info(
+            "No hay totales por W/C disponibles "
+            "para calcular la eficiencia."
+        )
+        return
+
+    # --------------------------------------------------------
+    # W/C correspondientes al filtro actual
+    # --------------------------------------------------------
+
+    wc_seleccionados = (
+        df_wc["W/C"]
+        .dropna()
+        .unique()
+    )
+
+    # --------------------------------------------------------
+    # Obtener eficiencia del Total de cada W/C
+    # --------------------------------------------------------
+
+    efficiency_wc = (
+        df_totales_wc[
+            df_totales_wc["W/C"].isin(
+                wc_seleccionados
+            )
+        ][
+            ["W/C", "Efficiency"]
+        ]
+        .copy()
+    )
+
+    # --------------------------------------------------------
+    # Conversión numérica
+    # --------------------------------------------------------
+
+    efficiency_wc["Efficiency"] = pd.to_numeric(
+        efficiency_wc["Efficiency"],
+        errors="coerce"
+    )
+
+    # Eliminar valores sin eficiencia
+    efficiency_wc = efficiency_wc.dropna(
+        subset=["Efficiency"]
+    )
+
+    # Ordenar de menor a mayor
+    efficiency_wc = efficiency_wc.sort_values(
+        by="Efficiency",
+        ascending=True
+    )
+
+    if efficiency_wc.empty:
+        st.info(
+            "No hay datos de eficiencia para "
+            "los filtros seleccionados."
+        )
+        return
+
+    # --------------------------------------------------------
+    # Gráfica
+    # --------------------------------------------------------
 
     fig = px.bar(
         efficiency_wc,
@@ -535,7 +812,7 @@ def grafica_eficiencia_wc(df_wc):
         text="Efficiency",
         color="Efficiency",
         color_continuous_scale="RdYlGn",
-        title="Promedio de Eficiencia",
+        title="Eficiencia por W/C",
         labels={
             "W/C": "Centro de Trabajo (W/C)",
             "Efficiency": "Eficiencia (%)",
@@ -543,8 +820,16 @@ def grafica_eficiencia_wc(df_wc):
         height=500,
     )
 
-    agregar_texto_barra(fig, "%{text:.1f}%")
-    configurar_layout(fig, margin_bottom=80)
+    agregar_texto_barra(
+        fig,
+        "%{text:.1f}%"
+    )
+
+    configurar_layout(
+        fig,
+        margin_bottom=80
+    )
+
     configurar_ejes(
         fig,
         x_grid=False,
@@ -552,11 +837,19 @@ def grafica_eficiencia_wc(df_wc):
         x_title="Centro de Trabajo (W/C)",
         y_title="Eficiencia (%)",
     )
-    fig.update_yaxes(range=[0, 100])
-    fig.update_xaxes(tickangle=35)
 
-    st.plotly_chart(fig, use_container_width=True)
+    fig.update_yaxes(
+        range=[0, 100]
+    )
 
+    fig.update_xaxes(
+        tickangle=35
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
 
 def grafica_produccion_wc(df_wc):
     df_unique = df_wc.drop_duplicates(subset=["Timesheet #"])
@@ -575,9 +868,9 @@ def grafica_produccion_wc(df_wc):
         text="Quantity",
         color="Quantity",
         color_continuous_scale="RdYlGn",
-        title="Producción por W/C",
+        title="Golpes por W/C",
         labels={
-            "Quantity": "Partes Producidas",
+            "Quantity": "Golpes por W/C",
             "W/C": "Centro de Trabajo (W/C)",
         },
         height=500,
@@ -589,7 +882,7 @@ def grafica_produccion_wc(df_wc):
         fig,
         x_grid=True,
         y_grid=False,
-        x_title="Partes Producidas",
+        x_title="Golpes por W/C",
         y_title="Centro de Trabajo (W/C)",
     )
 
@@ -923,31 +1216,101 @@ def grafica_oee_wc(df_wc):
 
     st.plotly_chart(fig, use_container_width=True)
 
-
 def grafica_horas_wc(df_wc):
-    df_unique = df_wc.drop_duplicates(subset=["Timesheet #"])
+
+    # ========================================================
+    # Obtener totales por W/C
+    # ========================================================
+
+    df_totales_wc = st.session_state.get(
+        "df_totales_wc"
+    )
+
+    if (
+        df_totales_wc is None
+        or df_totales_wc.empty
+    ):
+        st.info(
+            "No hay totales por W/C disponibles "
+            "para calcular las horas."
+        )
+        return
+
+    # ========================================================
+    # W/C correspondientes al filtro actual
+    # ========================================================
+
+    wc_seleccionados = (
+        df_wc["W/C"]
+        .dropna()
+        .unique()
+    )
+
+    # ========================================================
+    # Obtener Hours del Total de cada W/C
+    # ========================================================
 
     horas_wc = (
-        df_unique.groupby("W/C")["Hours"]
-        .sum()
-        .reset_index()
-        .sort_values(by="Hours", ascending=False)
+        df_totales_wc[
+            df_totales_wc["W/C"].isin(
+                wc_seleccionados
+            )
+        ][
+            ["W/C", "Hours"]
+        ]
+        .copy()
+    )
+
+    # ========================================================
+    # Conversión numérica
+    # ========================================================
+
+    horas_wc["Hours"] = pd.to_numeric(
+        horas_wc["Hours"],
+        errors="coerce"
+    )
+
+    # Eliminar W/C sin valor de horas
+    horas_wc = horas_wc.dropna(
+        subset=["Hours"]
+    )
+
+    # Ordenar de mayor a menor
+    horas_wc = horas_wc.sort_values(
+        by="Hours",
+        ascending=False
     )
 
     if horas_wc.empty:
-        st.info("No hay datos de horas para mostrar.")
+        st.info(
+            "No hay datos de horas para "
+            "los filtros seleccionados."
+        )
         return
 
+    # ========================================================
+    # Posición del texto
+    # ========================================================
+
     max_value = horas_wc["Hours"].max()
+
     horas_wc["TextPosition"] = horas_wc["Hours"].apply(
-        lambda x: "inside" if x > max_value * 0.15 else "outside"
+        lambda x: (
+            "inside"
+            if x > max_value * 0.15
+            else "outside"
+        )
     )
+
+    # ========================================================
+    # Gráfica
+    # ========================================================
 
     fig = px.bar(
         horas_wc,
         y="W/C",
         x="Hours",
-        text=horas_wc["Hours"].round(2).astype(str),
+        text="Hours",
         color="Hours",
         color_continuous_scale="RdYlGn",
         title="Total de Horas por W/C",
@@ -959,10 +1322,13 @@ def grafica_horas_wc(df_wc):
     )
 
     fig.update_traces(
+        texttemplate="%{text:.2f}",
         textposition=horas_wc["TextPosition"],
         insidetextanchor="middle",
     )
+
     configurar_layout(fig)
+
     configurar_ejes(
         fig,
         x_grid=True,
@@ -971,33 +1337,112 @@ def grafica_horas_wc(df_wc):
         y_title="Centro de Trabajo (W/C)",
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
 
 
 def grafica_nonproduction_wc(df_wc):
-    df_unique = df_wc.drop_duplicates(subset=["Timesheet #"])
+
+    # ========================================================
+    # Obtener totales por W/C
+    # ========================================================
+
+    df_totales_wc = st.session_state.get(
+        "df_totales_wc"
+    )
+
+    if (
+        df_totales_wc is None
+        or df_totales_wc.empty
+    ):
+        st.info(
+            "No hay totales por W/C disponibles "
+            "para calcular las horas no-producción."
+        )
+        return
+
+    # ========================================================
+    # W/C correspondientes al filtro actual
+    # ========================================================
+
+    wc_seleccionados = (
+        df_wc["W/C"]
+        .dropna()
+        .unique()
+    )
+
+    # ========================================================
+    # Obtener Non-production del Total de cada W/C
+    # ========================================================
 
     non_prod_wc = (
-        df_unique.groupby("W/C")["Non-production Downtime Hours"]
-        .sum()
-        .reset_index()
-        .sort_values(by="Non-production Downtime Hours", ascending=False)
+        df_totales_wc[
+            df_totales_wc["W/C"].isin(
+                wc_seleccionados
+            )
+        ][
+            ["W/C", "Non-production Downtime Hours"]
+        ]
+        .copy()
+    )
+
+    # ========================================================
+    # Conversión numérica
+    # ========================================================
+
+    non_prod_wc["Non-production Downtime Hours"] = pd.to_numeric(
+        non_prod_wc["Non-production Downtime Hours"],
+        errors="coerce"
+    )
+
+    # Eliminar valores sin dato
+    non_prod_wc = non_prod_wc.dropna(
+        subset=["Non-production Downtime Hours"]
+    )
+
+    # Ordenar de mayor a menor
+    non_prod_wc = non_prod_wc.sort_values(
+        by="Non-production Downtime Hours",
+        ascending=False
     )
 
     if non_prod_wc.empty:
-        st.info("No hay datos de horas no-producción para mostrar.")
+        st.info(
+            "No hay datos de horas no-producción "
+            "para los filtros seleccionados."
+        )
         return
 
-    max_value = non_prod_wc["Non-production Downtime Hours"].max()
-    non_prod_wc["TextPosition"] = non_prod_wc["Non-production Downtime Hours"].apply(
-        lambda x: "inside" if x > max_value * 0.15 else "outside"
+    # ========================================================
+    # Posición del texto
+    # ========================================================
+
+    max_value = non_prod_wc[
+        "Non-production Downtime Hours"
+    ].max()
+
+    non_prod_wc["TextPosition"] = (
+        non_prod_wc[
+            "Non-production Downtime Hours"
+        ].apply(
+            lambda x:
+                "inside"
+                if x > max_value * 0.15
+                else "outside"
+        )
     )
+
+    # ========================================================
+    # Gráfica
+    # ========================================================
 
     fig = px.bar(
         non_prod_wc,
         y="W/C",
         x="Non-production Downtime Hours",
-        text=non_prod_wc["Non-production Downtime Hours"].round(2).astype(str),
+        text="Non-production Downtime Hours",
         color="Non-production Downtime Hours",
         color_continuous_scale="RdYlGn_r",
         title="Total de Horas No-Producción por W/C",
@@ -1009,10 +1454,13 @@ def grafica_nonproduction_wc(df_wc):
     )
 
     fig.update_traces(
+        texttemplate="%{text:.2f}",
         textposition=non_prod_wc["TextPosition"],
         insidetextanchor="middle",
     )
+
     configurar_layout(fig)
+
     configurar_ejes(
         fig,
         x_grid=True,
@@ -1021,34 +1469,105 @@ def grafica_nonproduction_wc(df_wc):
         y_title="Centro de Trabajo (W/C)",
     )
 
-    st.plotly_chart(fig, use_container_width=True)
-
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
 
 def grafica_scrap_wc(df_wc):
-    #df_unique = df_wc.drop_duplicates(subset=["Timesheet #"])
-    df_unique = df_wc
+
+    # ========================================================
+    # Obtener totales por W/C
+    # ========================================================
+
+    df_totales_wc = st.session_state.get(
+        "df_totales_wc"
+    )
+
+    if (
+        df_totales_wc is None
+        or df_totales_wc.empty
+    ):
+        st.info(
+            "No hay totales por W/C disponibles "
+            "para calcular el Scrap."
+        )
+        return
+
+    # ========================================================
+    # W/C correspondientes al filtro actual
+    # ========================================================
+
+    wc_seleccionados = (
+        df_wc["W/C"]
+        .dropna()
+        .unique()
+    )
+
+    # ========================================================
+    # Obtener Scrap del Total de cada W/C
+    # ========================================================
 
     scrap_wc = (
-        df_unique.groupby("W/C")["Scrap"]
-        .sum()
-        .reset_index()
-        .sort_values(by="Scrap", ascending=False)
+        df_totales_wc[
+            df_totales_wc["W/C"].isin(
+                wc_seleccionados
+            )
+        ][
+            ["W/C", "Scrap"]
+        ]
+        .copy()
+    )
+
+    # ========================================================
+    # Conversión numérica
+    # ========================================================
+
+    scrap_wc["Scrap"] = pd.to_numeric(
+        scrap_wc["Scrap"],
+        errors="coerce"
+    )
+
+    # Eliminar valores sin dato
+    scrap_wc = scrap_wc.dropna(
+        subset=["Scrap"]
+    )
+
+    # Ordenar de mayor a menor
+    scrap_wc = scrap_wc.sort_values(
+        by="Scrap",
+        ascending=False
     )
 
     if scrap_wc.empty:
-        st.info("No hay datos de Scrap para mostrar.")
+        st.info(
+            "No hay datos de Scrap "
+            "para los filtros seleccionados."
+        )
         return
 
+    # ========================================================
+    # Posición del texto
+    # ========================================================
+
     max_value = scrap_wc["Scrap"].max()
+
     scrap_wc["TextPosition"] = scrap_wc["Scrap"].apply(
-        lambda x: "inside" if x > max_value * 0.15 else "outside"
+        lambda x:
+            "inside"
+            if x > max_value * 0.15
+            else "outside"
     )
+
+    # ========================================================
+    # Gráfica
+    # ========================================================
 
     fig = px.bar(
         scrap_wc,
         y="W/C",
         x="Scrap",
-        text=scrap_wc["Scrap"].astype(int).astype(str),
+        text="Scrap",
         color="Scrap",
         color_continuous_scale="RdYlGn_r",
         title="Scrap por W/C",
@@ -1060,10 +1579,13 @@ def grafica_scrap_wc(df_wc):
     )
 
     fig.update_traces(
+        texttemplate="%{text:.0f}",
         textposition=scrap_wc["TextPosition"],
         insidetextanchor="middle",
     )
+
     configurar_layout(fig)
+
     configurar_ejes(
         fig,
         x_grid=True,
@@ -1072,46 +1594,101 @@ def grafica_scrap_wc(df_wc):
         y_title="Centro de Trabajo (W/C)",
     )
 
-    st.plotly_chart(fig, use_container_width=True)
-
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
 
 def grafica_runrate_wc(df_wc, selected_shifts_global):
-    df_wc_filtrado = df_wc.copy()
 
-    if selected_shifts_global:
-        df_wc_filtrado = df_wc_filtrado[
-            df_wc_filtrado["Shift"].isin(selected_shifts_global)
-        ].copy()
+    # ========================================================
+    # Obtener totales por W/C
+    # ========================================================
 
-    df_wc_filtrado["Expected Run Rate /hr"] = pd.to_numeric(
-        df_wc_filtrado["Expected Run Rate /hr"],
-        errors="coerce",
+    df_totales_wc = st.session_state.get(
+        "df_totales_wc"
     )
-    df_wc_filtrado["Actual Run Rate /hr"] = pd.to_numeric(
-        df_wc_filtrado["Actual Run Rate /hr"],
-        errors="coerce",
+
+    if (
+        df_totales_wc is None
+        or df_totales_wc.empty
+    ):
+        st.info(
+            "No hay totales por W/C disponibles "
+            "para calcular el Run Rate."
+        )
+        return
+
+    # ========================================================
+    # W/C correspondientes al filtro actual
+    # ========================================================
+
+    wc_seleccionados = (
+        df_wc["W/C"]
+        .dropna()
+        .unique()
     )
+
+    # ========================================================
+    # Obtener Run Rate del Total de cada W/C
+    # ========================================================
 
     runrate_wc = (
-        df_wc_filtrado.groupby("W/C")[
-            ["Expected Run Rate /hr", "Actual Run Rate /hr"]
+        df_totales_wc[
+            df_totales_wc["W/C"].isin(
+                wc_seleccionados
+            )
+        ][
+            [
+                "W/C",
+                "Expected Run Rate /hr",
+                "Actual Run Rate /hr",
+            ]
         ]
-        .mean()
-        .reset_index()
+        .copy()
     )
+
+    # ========================================================
+    # Conversión numérica
+    # ========================================================
+
+    runrate_wc["Expected Run Rate /hr"] = pd.to_numeric(
+        runrate_wc["Expected Run Rate /hr"],
+        errors="coerce",
+    )
+
+    runrate_wc["Actual Run Rate /hr"] = pd.to_numeric(
+        runrate_wc["Actual Run Rate /hr"],
+        errors="coerce",
+    )
+
+    # ========================================================
+    # Eliminar W/C sin datos
+    # ========================================================
 
     runrate_wc = runrate_wc.dropna(
-        subset=["Expected Run Rate /hr", "Actual Run Rate /hr"]
+        subset=[
+            "Expected Run Rate /hr",
+            "Actual Run Rate /hr",
+        ]
     )
 
+    # Ordenar por Expected Run Rate
     runrate_wc = runrate_wc.sort_values(
         by="Expected Run Rate /hr",
         ascending=False,
     )
 
     if runrate_wc.empty:
-        st.info("No hay datos de Run Rate para mostrar.")
+        st.info(
+            "No hay datos de Run Rate "
+            "para los filtros seleccionados."
+        )
         return
+
+    # ========================================================
+    # Convertir a formato largo para Plotly
+    # ========================================================
 
     runrate_wc_melted = runrate_wc.melt(
         id_vars="W/C",
@@ -1123,17 +1700,33 @@ def grafica_runrate_wc(df_wc, selected_shifts_global):
         value_name="Run Rate",
     )
 
+    # ========================================================
+    # Posición del texto
+    # ========================================================
+
     max_value = runrate_wc_melted["Run Rate"].max()
-    runrate_wc_melted["TextPosition"] = runrate_wc_melted["Run Rate"].apply(
-        lambda x: "inside" if x > max_value * 0.15 else "outside"
+
+    runrate_wc_melted["TextPosition"] = (
+        runrate_wc_melted["Run Rate"].apply(
+            lambda x:
+                "inside"
+                if x > max_value * 0.15
+                else "outside"
+        )
     )
+
+    # ========================================================
+    # Gráfica
+    # ========================================================
 
     fig = px.bar(
         runrate_wc_melted,
         y="W/C",
         x="Run Rate",
         color="Tipo",
-        text=runrate_wc_melted["Run Rate"].apply(lambda x: f"{x:.2f}"),
+        text=runrate_wc_melted["Run Rate"].apply(
+            lambda x: f"{x:.2f}"
+        ),
         barmode="group",
         color_discrete_map={
             "Expected Run Rate /hr": "#1f77b4",
@@ -1151,7 +1744,12 @@ def grafica_runrate_wc(df_wc, selected_shifts_global):
         textposition=runrate_wc_melted["TextPosition"],
         insidetextanchor="middle",
     )
-    configurar_layout(fig, height=550)
+
+    configurar_layout(
+        fig,
+        height=550
+    )
+
     configurar_ejes(
         fig,
         x_grid=True,
@@ -1159,9 +1757,15 @@ def grafica_runrate_wc(df_wc, selected_shifts_global):
         x_title="Run Rate (unidades/hr)",
         y_title="Centro de Trabajo (W/C)",
     )
-    fig.update_layout(legend_title_text="")
 
-    st.plotly_chart(fig, use_container_width=True)
+    fig.update_layout(
+        legend_title_text=""
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
 
 
 # ============================================================
@@ -1262,21 +1866,70 @@ def mostrar_top5_centros(df_wc):
 
     col_x, col_y, col_z = st.columns(3)
 
+    # ========================================================
+    # TOP 5 MENOR EFICIENCIA
+    # ========================================================
+
     with col_x:
         st.markdown("**Menor Eficiencia (Top 5)**")
-        top5_low_eff = (
-            df_wc.groupby("W/C")["Efficiency"]
-            .mean()
-            .reset_index()
-            .sort_values(by="Efficiency", ascending=True)
-            .head(5)
+
+        df_totales_wc = st.session_state.get(
+            "df_totales_wc"
         )
-        st.dataframe(top5_low_eff, use_container_width=True)
+
+        if (
+            df_totales_wc is None
+            or df_totales_wc.empty
+        ):
+            st.info("No hay totales por W/C disponibles.")
+        else:
+
+            # Obtener únicamente los W/C que están presentes
+            # en el filtro actual
+            wc_seleccionados = (
+                df_wc["W/C"]
+                .dropna()
+                .unique()
+            )
+
+            top5_low_eff = (
+                df_totales_wc[
+                    df_totales_wc["W/C"].isin(
+                        wc_seleccionados
+                    )
+                ][
+                    ["W/C", "Efficiency"]
+                ]
+                .copy()
+                .sort_values(
+                    by="Efficiency",
+                    ascending=True
+                )
+                .head(5)
+            )
+
+            top5_low_eff["Efficiency"] = pd.to_numeric(
+                top5_low_eff["Efficiency"],
+                errors="coerce"
+            )
+
+            st.dataframe(
+                top5_low_eff,
+                use_container_width=True,
+                hide_index=True
+            )
+
+    # ========================================================
+    # TOP 5 DOWNTIME
+    # ========================================================
 
     with col_y:
         st.markdown("**Más Tiempo de Downtime (Top 5)**")
+
         top5_downtime = (
-            df_wc.groupby("W/C")["Production Downtime Hours"]
+            df_wc.groupby("W/C")[
+                "Production Downtime Hours"
+            ]
             .sum()
             .reset_index()
             .sort_values(
@@ -1285,20 +1938,36 @@ def mostrar_top5_centros(df_wc):
             )
             .head(5)
         )
-        st.dataframe(top5_downtime, use_container_width=True)
+
+        st.dataframe(
+            top5_downtime,
+            use_container_width=True,
+            hide_index=True
+        )
+
+    # ========================================================
+    # TOP 5 SCRAP
+    # ========================================================
 
     with col_z:
         st.markdown("**Más Scrap (Top 5)**")
+
         top5_scrap = (
             df_wc.groupby("W/C")["Scrap"]
             .sum()
             .reset_index()
-            .sort_values(by="Scrap", ascending=False)
+            .sort_values(
+                by="Scrap",
+                ascending=False
+            )
             .head(5)
         )
-        st.dataframe(top5_scrap, use_container_width=True)
 
-
+        st.dataframe(
+            top5_scrap,
+            use_container_width=True,
+            hide_index=True
+        )
 # ============================================================
 # CUMPLIMIENTO AL PLAN
 # ============================================================
@@ -1490,13 +2159,13 @@ def mostrar_cumplimiento_plan(df_filtrado):
 # ============================================================
 
 def dashboard():
-    if st.session_state.df_clean is None:
+    if st.session_state.df_produccion_detalle is None:
         st.warning(
             "Primero carga el reporte Production Timecard."
         )
         return
 
-    df = st.session_state.df_clean
+    df = st.session_state.df_produccion_detalle
 
     # --------------------------------------------------------
     # Filtros globales

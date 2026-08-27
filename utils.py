@@ -582,3 +582,245 @@ def procesar_montos_escalera(df):
     df_montos.dropna(subset=["Mes", "Monto"], inplace=True)
 
     return df_montos
+
+@st.cache_data
+def cargar_production_timecards(file, skiprows=4):
+    """
+    Carga y procesa el reporte Production Timecards.
+
+    El reporte contiene:
+    - Registros individuales de producción.
+    - Totales por W/C.
+    - Totales por W/C Type.
+
+    Los campos W/C Type y W/C que vienen vacíos por agrupación
+    se heredan del registro anterior correspondiente.
+    """
+
+    try:
+        # ---------------------------------------------------------
+        # 1. Leer archivo
+        # ---------------------------------------------------------
+        df = pd.read_excel(
+            file,
+            skiprows=skiprows,
+            engine="openpyxl"
+        )
+
+        # ---------------------------------------------------------
+        # 2. Limpiar encabezados
+        # ---------------------------------------------------------
+        df.columns = (
+            df.columns
+            .astype(str)
+            .str.replace(r"\s+", " ", regex=True)
+            .str.strip()
+        )
+
+        # ---------------------------------------------------------
+        # 3. Validar columnas requeridas
+        # ---------------------------------------------------------
+        columnas_faltantes = [
+            col
+            for col in required_columns
+            if col not in df.columns
+        ]
+
+        if columnas_faltantes:
+            return None, (
+                "Faltan las siguientes columnas en "
+                f"Production Timecards: {columnas_faltantes}"
+            )
+
+        # ---------------------------------------------------------
+        # 4. Conservar columnas requeridas
+        # ---------------------------------------------------------
+        df = df[required_columns].copy()
+
+        # ---------------------------------------------------------
+        # 5. Limpiar strings
+        # ---------------------------------------------------------
+        for col in df.columns:
+            if df[col].dtype == "object":
+                df[col] = (
+                    df[col]
+                    .astype("string")
+                    .str.strip()
+                )
+
+        # ---------------------------------------------------------
+        # 6. Inicializar clasificación
+        # ---------------------------------------------------------
+        df["Record Type"] = "Detail"
+
+        df["Total Level"] = pd.NA
+
+        # ---------------------------------------------------------
+        # 7. Detectar filas de totales
+        # ---------------------------------------------------------
+        texto_wc_type = (
+            df["W/C Type"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+        texto_wc = (
+            df["W/C"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+        mask_total_wc_type = texto_wc_type.str.startswith(
+            "Totals for",
+            na=False
+        )
+
+        mask_total_wc = texto_wc.str.startswith(
+            "Totals for",
+            na=False
+        )
+
+        # Total por W/C Type
+        df.loc[mask_total_wc_type, "Record Type"] = "W/C Type Total"
+        df.loc[mask_total_wc_type, "Total Level"] = "W/C Type"
+
+        # Total por W/C
+        df.loc[mask_total_wc, "Record Type"] = "W/C Total"
+        df.loc[mask_total_wc, "Total Level"] = "W/C"
+
+        # ---------------------------------------------------------
+        # 8. Heredar W/C Type y W/C
+        # ---------------------------------------------------------
+
+        # Solo usamos los registros de detalle para construir
+        # la relación de grupo.
+        detail_mask = df["Record Type"] == "Detail"
+
+        df["W/C Type"] = (
+            df["W/C Type"]
+            .where(detail_mask)
+            .ffill()
+        )
+
+        df["W/C"] = (
+            df["W/C"]
+            .where(detail_mask)
+            .ffill()
+        )
+
+        # ---------------------------------------------------------
+        # 9. Restaurar información de los totales
+        # ---------------------------------------------------------
+
+        # Recorremos los registros para asignar correctamente
+        # el grupo a las filas de totales.
+        current_wc_type = None
+        current_wc = None
+
+        for idx in df.index:
+
+            record_type = df.loc[idx, "Record Type"]
+
+            if record_type == "Detail":
+
+                if pd.notna(df.loc[idx, "W/C Type"]):
+                    current_wc_type = df.loc[idx, "W/C Type"]
+
+                if pd.notna(df.loc[idx, "W/C"]):
+                    current_wc = df.loc[idx, "W/C"]
+
+            elif record_type == "W/C Total":
+
+                df.loc[idx, "W/C Type"] = current_wc_type
+
+                texto = str(
+                    df.loc[idx, "W/C"]
+                ).strip()
+
+                if texto.startswith("Totals for"):
+                    df.loc[idx, "W/C"] = texto.replace(
+                        "Totals for",
+                        "",
+                        1
+                    ).strip()
+
+            elif record_type == "W/C Type Total":
+
+                texto = str(
+                    df.loc[idx, "W/C Type"]
+                ).strip()
+
+                if texto.startswith("Totals for"):
+                    df.loc[idx, "W/C Type"] = texto.replace(
+                        "Totals for",
+                        "",
+                        1
+                    ).strip()
+
+                df.loc[idx, "W/C"] = pd.NA
+
+        # ---------------------------------------------------------
+        # 10. Limpiar valores
+        # ---------------------------------------------------------
+        df = df.replace(
+            {
+                "": pd.NA,
+                "nan": pd.NA,
+                "None": pd.NA,
+                "NaT": pd.NA,
+                "-": pd.NA,
+                "N/A": pd.NA,
+            }
+        )
+
+        # ---------------------------------------------------------
+        # 11. Convertir fecha
+        # ---------------------------------------------------------
+        if "Completed On" in df.columns:
+            df["Completed On"] = pd.to_datetime(
+                df["Completed On"],
+                errors="coerce"
+            )
+
+        return df, None
+
+    except Exception as e:
+
+        return None, (
+            "Error al cargar Production Timecards: "
+            f"{str(e)}"
+        )
+
+def separar_production_timecards(df):
+    """
+    Separa Production Timecards en:
+    - registros individuales
+    - totales por W/C
+    - totales por W/C Type
+    """
+
+    if df is None or df.empty:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    # Registros individuales
+    df_detalle = df[
+        df["Record Type"] == "Detail"
+    ].copy()
+
+    # Totales por W/C
+    df_totales_wc = df[
+        df["Record Type"] == "W/C Total"
+    ].copy()
+
+    # Totales por W/C Type
+    df_totales_wc_type = df[
+        df["Record Type"] == "W/C Type Total"
+    ].copy()
+
+    return (
+        df_detalle,
+        df_totales_wc,
+        df_totales_wc_type
+    )
