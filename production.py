@@ -1343,136 +1343,51 @@ def grafica_horas_wc(df_wc):
     )
 
 
-def grafica_nonproduction_wc(df_wc):
+def grafica_nonproduction_wc(df_wc): 
+    df_unique = df_wc.drop_duplicates(subset=["Timesheet #"]) 
+    non_prod_wc = ( 
+        df_unique.groupby("W/C")["Non-production Downtime Hours"] 
+        .sum() 
+        .reset_index() 
+        .sort_values(by="Non-production Downtime Hours", ascending=False) 
+        ) 
 
-    # ========================================================
-    # Obtener totales por W/C
-    # ========================================================
+    if non_prod_wc.empty: 
+        st.info("No hay datos de horas no-producción para mostrar.") 
+        return 
 
-    df_totales_wc = st.session_state.get(
-        "df_totales_wc"
-    )
-
-    if (
-        df_totales_wc is None
-        or df_totales_wc.empty
-    ):
-        st.info(
-            "No hay totales por W/C disponibles "
-            "para calcular las horas no-producción."
+    max_value = non_prod_wc["Non-production Downtime " \
+    "Hours"].max() 
+    non_prod_wc["TextPosition"] = non_prod_wc["Non-production Downtime Hours"].apply( 
+        lambda x: "inside" if x > max_value * 0.15 else "outside" 
         )
-        return
 
-    # ========================================================
-    # W/C correspondientes al filtro actual
-    # ========================================================
-
-    wc_seleccionados = (
-        df_wc["W/C"]
-        .dropna()
-        .unique()
-    )
-
-    # ========================================================
-    # Obtener Non-production del Total de cada W/C
-    # ========================================================
-
-    non_prod_wc = (
-        df_totales_wc[
-            df_totales_wc["W/C"].isin(
-                wc_seleccionados
-            )
-        ][
-            ["W/C", "Non-production Downtime Hours"]
-        ]
-        .copy()
-    )
-
-    # ========================================================
-    # Conversión numérica
-    # ========================================================
-
-    non_prod_wc["Non-production Downtime Hours"] = pd.to_numeric(
-        non_prod_wc["Non-production Downtime Hours"],
-        errors="coerce"
-    )
-
-    # Eliminar valores sin dato
-    non_prod_wc = non_prod_wc.dropna(
-        subset=["Non-production Downtime Hours"]
-    )
-
-    # Ordenar de mayor a menor
-    non_prod_wc = non_prod_wc.sort_values(
-        by="Non-production Downtime Hours",
-        ascending=False
-    )
-
-    if non_prod_wc.empty:
-        st.info(
-            "No hay datos de horas no-producción "
-            "para los filtros seleccionados."
+    fig = px.bar( 
+        non_prod_wc, 
+        y="W/C", 
+        x="Non-production Downtime Hours", 
+        text=non_prod_wc["Non-production Downtime Hours"].round(2).astype(str), 
+        color="Non-production Downtime Hours", 
+        color_continuous_scale="RdYlGn_r", 
+        title="Total de Horas No-Producción por W/C", 
+        labels={ "Non-production Downtime Hours": "Horas No-Producción", "W/C": "Centro de Trabajo (W/C)", }, 
+        height=500, 
         )
-        return
-
-    # ========================================================
-    # Posición del texto
-    # ========================================================
-
-    max_value = non_prod_wc[
-        "Non-production Downtime Hours"
-    ].max()
-
-    non_prod_wc["TextPosition"] = (
-        non_prod_wc[
-            "Non-production Downtime Hours"
-        ].apply(
-            lambda x:
-                "inside"
-                if x > max_value * 0.15
-                else "outside"
+     
+    fig.update_traces( 
+        textposition=non_prod_wc["TextPosition"], 
+        insidetextanchor="middle", 
         )
-    )
-
-    # ========================================================
-    # Gráfica
-    # ========================================================
-
-    fig = px.bar(
-        non_prod_wc,
-        y="W/C",
-        x="Non-production Downtime Hours",
-        text="Non-production Downtime Hours",
-        color="Non-production Downtime Hours",
-        color_continuous_scale="RdYlGn_r",
-        title="Total de Horas No-Producción por W/C",
-        labels={
-            "Non-production Downtime Hours": "Horas No-Producción",
-            "W/C": "Centro de Trabajo (W/C)",
-        },
-        height=500,
-    )
-
-    fig.update_traces(
-        texttemplate="%{text:.2f}",
-        textposition=non_prod_wc["TextPosition"],
-        insidetextanchor="middle",
-    )
-
-    configurar_layout(fig)
-
-    configurar_ejes(
-        fig,
-        x_grid=True,
-        y_grid=False,
-        x_title="Total de Horas No-Producción",
-        y_title="Centro de Trabajo (W/C)",
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
+    
+    configurar_layout(fig) 
+    configurar_ejes( 
+        fig, 
+        x_grid=True, 
+        y_grid=False, 
+        x_title="Total de Horas No-Producción", 
+        y_title="Centro de Trabajo (W/C)", 
+        )
+    st.plotly_chart(fig, use_container_width=True)
 
 def grafica_scrap_wc(df_wc):
 
