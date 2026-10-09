@@ -103,7 +103,8 @@ catalogo_downtime = pd.DataFrame({
         "D051", "D052", "D053", "D054", "D055", "D056", "D057", "D058", "D059", "D060",
         "D061", "D062", "D063", "D064", "D065", "D066", "D067", "D068", "D069", "D070",
         "D071", "D072", "D073", "D074", "D075", "D076", "D077", "D078", "D079", "D080",
-        "D081", "D082", "D083", "D63.5", "D69.5", "D084"
+        "D081", "D082", "D083", "D63.5", "D69.5", "D084", "D68.5", "D085", "D086", "D087",
+        "D088", "D089", "D090", "D091"
     ],
 
     "Description": [
@@ -192,7 +193,15 @@ catalogo_downtime = pd.DataFrame({
         "AJUSTE DE SENSOR POR INTERFERENCIA MECANICA",
         "FALLA DE ALIMENTADOR NUT",
         "MATERIAL INCORRECTO",
-        "FALLA EN SENSOR WELDING FIXTURE"
+        "FALLA EN SENSOR WELDING FIXTURE",
+        "FALTA DE COMPONENTES",
+        "AJUSTE DE ROBOT – REBABA / SALPICADURA – SPOT",
+        "AJUSTE DE ROBOT – AJUSTE DIMENSIONAL / POSICIÓN DE SOLDADURA – SPOT",
+        "AJUSTE DE ROBOT – PRUEBA DESTRUCTIVA / CUT & ETCH NO OK – GMAW",
+        "AJUSTE DE ROBOT – DISCONTINUIDADES DE SOLDADURA – GMAW",
+        "AJUSTE DE ROBOT – AJUSTE DIMENSIONAL / POSICIÓN DE SOLDADURA – GMAW",
+        "AJUSTE DE ROBOT – CAMBIO DE CONDICIÓN DE MATERIAL BASE (LOTES)",
+        "COLISIÓN DE ROBOT "
     ],
 
     "Área responsable": [
@@ -281,6 +290,14 @@ catalogo_downtime = pd.DataFrame({
         "Herramental",
         "Mantenimiento",
         "Logística",
+        "Herramental",
+        "Logística",
+        "Herramental",
+        "Herramental",
+        "Herramental",
+        "Herramental",
+        "Herramental",
+        "Herramental",
         "Herramental"
     ]
 })
