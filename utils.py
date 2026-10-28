@@ -2,6 +2,7 @@
 import pandas as pd
 import streamlit as st
 import io
+import re
 import plotly.express as px
 from datetime import datetime
 from io import BytesIO
@@ -105,103 +106,6 @@ catalogo_downtime = pd.DataFrame({
         "D071", "D072", "D073", "D074", "D075", "D076", "D077", "D078", "D079", "D080",
         "D081", "D082", "D083", "D63.5", "D69.5", "D084", "D68.5", "D085", "D086", "D087",
         "D088", "D089", "D090", "D091"
-    ],
-
-    "Description": [
-        "cambio de rollo",
-        "cambio de contenedor",
-        "AJUSTES DE TROQUEL / ALINEACION / CAMBIO FECHA JULIANA",
-        "TROQUEL DAÑADO POR MAL GOLPE / AJUSTE",
-        "FALLA EN SENSOR DE TROQUEL",
-        "REVISION DE PIEZA / INSPECCIÓN",
-        "AJUSTE POR REBABA",
-        "AJUSTE DE PLANICIDAD",
-        "AJUSTE DE PERFIL",
-        "AJUSTE POR FISURA",
-        "AJUSTE POR DEFORMACION",
-        "AJUSTE POR LOCALIZACION",
-        "AJUSTE POR MARCA EN PIEZA",
-        "AJUSTE POR FALTA DE FORMA",
-        "AJUSTE POR TORNILLO CAPADO",
-        "CILINDROS O RESORTES DAÑADOS",
-        "NO LOCALIZA EN DISPOSITIVO DE CONTROL",
-        "TROQUEL DAÑADO POR MALA REPARACION",
-        "FALLA EN PORTAROLLO / DESENRROLLADOR",
-        "FALLA EN ENDEREZADOR",
-        "FALLA EN EL ALIMENTADOR",
-        "FALLA EN PRENSA",
-        "FALLA EN SISTEMA DE AIRE",
-        "FALLA NEUMATICA",
-        "FALLA HIDRAULICA",
-        "FALLA EN CORTINAS DE SEGURIDAD",
-        "FALLA EN SISTEMA DE LUBRICACIÓN",
-        "FALLA ELECTRICA",
-        "FALLA DE MONTACARGAS",
-        "FALTA DE MATERIA PRIMA (No se a traído o falta documentación para liberar)",
-        "FALTA DE CONTENEDORES/TROQUEL/TOLVAS (Montacargas)",
-        "Falta de Orden de trabajo o etiquetas",
-        "Error en programa (se modifica programa o no hay acero de orden programada)",
-        "Falta de Empaque / Empaque mal rasurado",
-        "PARO POR RETIRO DE TOLVAS DE SCRAP",
-        "LIBERACIÓN DE PIEZA",
-        "PARO POR FALTA DE LIBERACION DE ACERO",
-        "CAMBIO DE CAPS / ELECTRODOS",
-        "LIMPIEZA DE CAPS",
-        "EXCEDENTE DE LIBERACIÓN",
-        "EXCEDENTE TPM (5 min)",
-        "EXCEDENTE RELLENO DE ANTI ESPATER",
-        "EXCEDENTE CAMBIO DE GAS",
-        "EXCEDENTE CAMBIO DE MICROALAMBRE",
-        "EXCEDENTE CAMBIO DE PUNTA DE CONTACTO",
-        "EXCEDENTE CAMBIO DE TOBERA",
-        "REEMPAQUE",
-        "AJUSTE DE PUNTO",
-        "AJUSTE DE CORDÓN",
-        "AJUSTE DE CÁMARAS",
-        "AJUSTE DE SENSOR MAQUINA",
-        "AJUSTE DE ERROR PROOFING PROGRAMACION",
-        "FALLA DE PEDESTAL",
-        "FALLA EN SISTEMA DE AIRE",
-        "FALLA NEUMÁTICA",
-        "FALLA HIDRÁULICA",
-        "FALLA EN SEGURIDADES DE CELDA",
-        "FALLA DE ROBOT",
-        "FALLA DE PLANTA DE SOLDAR",
-        "FALLA ELÉCTRICA",
-        "FALLA DE COMUNICACIÓN",
-        "FALLA DE MONTACARGAS",
-        "CORTE EN EL SUMINISTRO DE ENEGÍA EN PLANTA",
-        "FALTA DE ETIQUETAS DE COMPONENTES EXTERNOS",
-        "FALTA DE CONTENEDORES",
-        "FALTA DE ORDEN DE TRABAJO O ETIQUETAS",
-        "ERROR EN PROGRAMA",
-        "FALTA DE MATERIA PRIMA",
-        "EMPAQUE MAL RASURADO",
-        "LIBERACIÓN DE PIEZA",
-        "MATERIAL CON DEFECTO DE PROVEEDOR",
-        "PARO POR FALTA DE LIBERACIÓN DE COMPONENTES",
-        "EXCEDENTE DE TIEMPO POR CUT&ETCH",
-        "FALTA DE REFACCIÓN / (CONSUMIBLE, SENSORES, ETC)",
-        "AJUSTE DE CLAMPS",
-        "AJUSTE DIMENSIONAL",
-        "TORNILLERIA FLOJA EN WELDING FIXTURE",
-        "CAMBIO DE ELECTRODOS",
-        "AJUSTE POR PRUEBA DESTRUCTIVA NO-OK",
-        "PARAMETROS INCORRECTOS / HOJA DE SET-UP",
-        "AJUSTES POR REBABA/ SALPICADURAS",
-        "TIEMPO EXCDENTE EN CAMBIO DE MODELO",
-        "AJUSTE DE SENSOR POR INTERFERENCIA MECANICA",
-        "FALLA DE ALIMENTADOR NUT",
-        "MATERIAL INCORRECTO",
-        "FALLA EN SENSOR WELDING FIXTURE",
-        "FALTA DE COMPONENTES",
-        "AJUSTE DE ROBOT – REBABA / SALPICADURA – SPOT",
-        "AJUSTE DE ROBOT – AJUSTE DIMENSIONAL / POSICIÓN DE SOLDADURA – SPOT",
-        "AJUSTE DE ROBOT – PRUEBA DESTRUCTIVA / CUT & ETCH NO OK – GMAW",
-        "AJUSTE DE ROBOT – DISCONTINUIDADES DE SOLDADURA – GMAW",
-        "AJUSTE DE ROBOT – AJUSTE DIMENSIONAL / POSICIÓN DE SOLDADURA – GMAW",
-        "AJUSTE DE ROBOT – CAMBIO DE CONDICIÓN DE MATERIAL BASE (LOTES)",
-        "COLISIÓN DE ROBOT "
     ],
 
     "Área responsable": [
@@ -321,29 +225,145 @@ def cargar_downtime(file):
         return None
 
 def extraer_downtime(df):
+    """
+    Procesa el reporte Downtime.
+
+    Extrae:
+    - W/C: identificador del centro de trabajo.
+    - Horas Downtime: horas registradas.
+    - Razones: código de la razón de paro.
+    - Description: descripción obtenida del encabezado del Excel.
+
+    Omite:
+    - Filas de totales.
+    - Encabezados generales.
+    - Filas correspondientes a W/C Type.
+    """
+
     data = []
-    current_reason = None
 
-    for index, row in df.iterrows():
-        texto = str(row["WorkCenter"]).strip()
+    current_reason_id = None
+    current_description = None
 
-        # Detectar encabezado de grupo tipo D005 - D005
-        if texto.startswith("D") and " - " in texto:
-            current_reason = texto.split(" - ")[0]
+    # Ejemplos:
+    # D007-AJUSTE POR REBABA
+    # D016-CILINDROS O RESORTES DAÑADOS
+    # D63.5-DESCRIPCIÓN
+    patron_razon = re.compile(
+        r"^\s*(D\d+(?:\.\d+)?)\s*-\s*(.+?)\s*$",
+        re.IGNORECASE,
+    )
 
-        # Ignorar Totales y líneas vacías o genéricas
-        elif texto.startswith("Total") or texto == "" or texto.upper() == "PRESS - PRESS" or texto.upper() == "WELDING N2 - WELD N2" or texto.upper() == "PROD N4 - PROD N4" or texto.upper() == "Down Time by WC":
+    # W/C Type que deben omitirse.
+    wc_types_omitidos = {
+        "PRESS - PRESS",
+        "PRESS - PRESS",  # Incluye variantes de mayúsculas/minúsculas.
+        "PROD N5 - PROD N5",
+        "WELDING N2 - WELD N2",
+        "PROD N4 - PROD N4",
+    }
+
+    for _, row in df.iterrows():
+
+        valor = row.get("WorkCenter")
+
+        if pd.isna(valor):
             continue
 
-        # Si hay razón activa y es una línea válida
-        elif current_reason:
-            data.append({
-                "W/C": texto.split(" - ")[0],  # antes del primer guión por si hay
-                "Horas Downtime": row["TotalHours"],
-                "Razones": current_reason
-            })
+        texto = str(valor).strip()
 
-    return pd.DataFrame(data)
+        if not texto:
+            continue
+
+        texto_upper = texto.upper()
+
+        # ----------------------------------------------------
+        # 1. Omitir encabezados generales, W/C Type y totales.
+        # ----------------------------------------------------
+        if (
+            texto_upper.startswith("TOTAL")
+            or texto_upper in wc_types_omitidos
+            or texto_upper == "DOWN TIME BY WC"
+        ):
+            continue
+
+        # ----------------------------------------------------
+        # 2. Identificar encabezados de razones de paro.
+        # ----------------------------------------------------
+        if " - " in texto:
+
+            partes = texto.split(" - ", 1)
+
+            izquierda = partes[0].strip()
+            derecha = partes[1].strip()
+
+            razon_izquierda = patron_razon.fullmatch(izquierda)
+            razon_derecha = patron_razon.fullmatch(derecha)
+
+            # Es un encabezado de razón si ambas partes contienen
+            # el mismo código y la misma descripción.
+            if razon_izquierda and razon_derecha:
+
+                codigo_izquierdo = razon_izquierda.group(1).upper()
+                descripcion_izquierda = razon_izquierda.group(2).strip()
+
+                codigo_derecho = razon_derecha.group(1).upper()
+                descripcion_derecha = razon_derecha.group(2).strip()
+
+                if (
+                    codigo_izquierdo == codigo_derecho
+                    and descripcion_izquierda.casefold()
+                    == descripcion_derecha.casefold()
+                ):
+                    current_reason_id = codigo_izquierdo
+                    current_description = descripcion_izquierda
+                    continue
+
+            # Para el resto de las filas, tomar el identificador
+            # que aparece antes del separador " - ".
+            wc = izquierda
+
+        else:
+            # Si la fila no tiene el formato esperado, no se
+            # puede identificar con seguridad como W/C.
+            continue
+
+        # ----------------------------------------------------
+        # 3. No procesar centros si todavía no hay una razón.
+        # ----------------------------------------------------
+        if current_reason_id is None:
+            continue
+
+        # Evitar guardar códigos de razón como centros de trabajo.
+        if patron_razon.fullmatch(wc):
+            continue
+
+        # ----------------------------------------------------
+        # 4. Convertir horas y guardar el registro.
+        # ----------------------------------------------------
+        horas = pd.to_numeric(
+            row.get("TotalHours"),
+            errors="coerce",
+        )
+
+        if pd.isna(horas):
+            continue
+
+        data.append({
+            "W/C": wc,
+            "Horas Downtime": horas,
+            "Razones": current_reason_id,
+            "Description": current_description,
+        })
+
+    columnas_salida = [
+        "W/C",
+        "Horas Downtime",
+        "Razones",
+        "Description",
+    ]
+
+    return pd.DataFrame(data, columns=columnas_salida)
 
 # Filtros DownTime
 def filtrar_downtime(df_downtime, fechas=None, turnos=None, wc_types=None, wcs=None):

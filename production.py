@@ -11,8 +11,8 @@ from utils import (
     required_columns_plan,
     cargar_downtime,
     extraer_downtime,
-    catalogo_downtime,
     filtrar_downtime,
+    catalogo_downtime
 )
 
 # ============================================================
@@ -416,7 +416,10 @@ def preparar_downtime(
     selected_wc_types_global,
     selected_wcs_global,
 ):
-    """Filtra Downtime y agrega Description y Área responsable desde el catálogo."""
+    """
+    Filtra Downtime y conserva el Reason ID y Description extraídos
+    del Excel. Agrega únicamente Área responsable desde el catálogo.
+    """
 
     df_downtime = st.session_state.df_downtime_procesado
 
@@ -437,39 +440,61 @@ def preparar_downtime(
     if df_downtime_filtrado.empty:
         return df_downtime_filtrado
 
-    # Asegurar que Reason ID sea texto para que D63.5 / D69.5
-    # se mantengan correctamente.
+    # --------------------------------------------------------
+    # 1. Normalizar Reason ID y Description provenientes
+    #    del procesamiento del Excel.
+    # --------------------------------------------------------
     df_downtime_filtrado["Razones"] = (
         df_downtime_filtrado["Razones"]
         .astype("string")
         .str.strip()
+        .str.upper()
     )
 
-    catalogo = catalogo_downtime.copy()
-    catalogo["Reason ID"] = (
-        catalogo["Reason ID"]
+    if "Description" not in df_downtime_filtrado.columns:
+        st.error(
+            "El DataFrame de Downtime no contiene la columna "
+            "'Description'. Revisa extraer_downtime() en utils.py."
+        )
+        return None
+
+    df_downtime_filtrado["Description"] = (
+        df_downtime_filtrado["Description"]
         .astype("string")
         .str.strip()
     )
 
-    columnas_catalogo = ["Reason ID", "Description"]
+    # --------------------------------------------------------
+    # 2. Construir un catálogo exclusivo de áreas responsables.
+    #    catalogo_downtime debe conservar Reason ID y Área responsable.
+    # --------------------------------------------------------
+    catalogo = catalogo_downtime.copy()
 
-    # Área responsable es opcional para mantener compatibilidad
-    # mientras se actualiza utils.py.
-    if "Área responsable" in catalogo.columns:
-        columnas_catalogo.append("Área responsable")
-    else:
-        st.warning(
-            "⚠️ El catálogo de Downtime todavía no contiene la columna "
-            "'Área responsable'. Actualiza catalogo_downtime en utils.py."
+    columnas_requeridas = {"Reason ID", "Área responsable"}
+
+    if not columnas_requeridas.issubset(catalogo.columns):
+        st.error(
+            "El catálogo de Downtime debe contener las columnas "
+            "'Reason ID' y 'Área responsable'."
         )
+        return None
 
-    # Evitar duplicación accidental si el catálogo tiene Reason ID repetido.
-    catalogo = catalogo[columnas_catalogo].drop_duplicates(
-        subset=["Reason ID"],
-        keep="first",
+    catalogo["Reason ID"] = (
+        catalogo["Reason ID"]
+        .astype("string")
+        .str.strip()
+        .str.upper()
     )
 
+    # Evitar duplicados en la relación Reason ID -> Área responsable.
+    catalogo = (
+        catalogo[["Reason ID", "Área responsable"]]
+        .drop_duplicates(subset=["Reason ID"], keep="first")
+    )
+
+    # --------------------------------------------------------
+    # 3. Agregar Área responsable sin sobrescribir Description.
+    # --------------------------------------------------------
     df_downtime_filtrado = df_downtime_filtrado.merge(
         catalogo,
         left_on="Razones",
@@ -477,6 +502,33 @@ def preparar_downtime(
         how="left",
         validate="many_to_one",
     )
+
+    # Eliminar la columna auxiliar del catálogo.
+    df_downtime_filtrado.drop(
+        columns=["Reason ID"],
+        inplace=True,
+        errors="ignore",
+    )
+
+    # --------------------------------------------------------
+    # 4. Advertir si hay razones sin área asignada.
+    # --------------------------------------------------------
+    razones_sin_area = (
+        df_downtime_filtrado.loc[
+            df_downtime_filtrado["Área responsable"].isna(),
+            "Razones",
+        ]
+        .dropna()
+        .unique()
+        .tolist()
+    )
+
+    if razones_sin_area:
+        st.warning(
+            "Las siguientes razones de Downtime no tienen un área "
+            "responsable asignada en catalogo_downtime: "
+            + ", ".join(sorted(razones_sin_area))
+        )
 
     return df_downtime_filtrado
 
